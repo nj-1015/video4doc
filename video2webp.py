@@ -729,31 +729,64 @@ class SideBySideConverter:
     def _show_preview(self, _=None):
         with self.preview_output:
             clear_output(wait=True)
-            frame_num = self.frame_range.value[0]
-            frames = []
-            captions = []
-            for sel in self.selectors:
-                roi = sel.get_roi()
-                f = self._extract_roi_frame(sel.video, roi, frame_num)
-                if f is not None:
-                    frames.append(f)
-                    captions.append(sel.caption.value)
+            print("Generating animated preview...")
 
-            if len(frames) == len(self.videos):
-                combined = self._combine_frames(frames, captions)
-                img = Image.fromarray(combined)
+            start_frame, end_frame = self.frame_range.value
+            rois = [sel.get_roi() for sel in self.selectors]
+            captions = [sel.caption.value for sel in self.selectors]
 
-                # Scale for preview
-                max_preview = 800
-                if img.width > max_preview:
-                    ratio = max_preview / img.width
-                    img = img.resize((int(img.width * ratio), int(img.height * ratio)))
+            # Limit preview to ~3 seconds or 60 frames max
+            fps = self.videos[0].fps
+            max_preview_frames = min(60, int(fps * 3))
+            preview_skip = max(1, (end_frame - start_frame) // max_preview_frames)
+
+            preview_frames = []
+            frame_count = 0
+
+            for i in range(start_frame, end_frame + 1):
+                if (i - start_frame) % (self.frame_skip.value * preview_skip) != 0:
+                    continue
+
+                frames = []
+                for j, sel in enumerate(self.selectors):
+                    f = self._extract_roi_frame(sel.video, rois[j], i)
+                    if f is not None:
+                        frames.append(f)
+
+                if len(frames) == len(self.videos):
+                    combined = self._combine_frames(frames, captions)
+                    img = Image.fromarray(combined)
+
+                    # Scale for preview
+                    max_preview_size = 600
+                    if img.width > max_preview_size or img.height > max_preview_size:
+                        ratio = max_preview_size / max(img.width, img.height)
+                        img = img.resize((int(img.width * ratio), int(img.height * ratio)))
+
+                    preview_frames.append(img)
+                    frame_count += 1
+
+                    if frame_count >= max_preview_frames:
+                        break
+
+            if preview_frames:
+                # Create animated preview
+                effective_fps = fps / self.frame_skip.value
+                duration_ms = int(1000 / effective_fps * preview_skip)
 
                 buffer = io.BytesIO()
-                img.save(buffer, format='PNG')
+                preview_frames[0].save(
+                    buffer, format='GIF',
+                    save_all=True,
+                    append_images=preview_frames[1:],
+                    duration=duration_ms,
+                    loop=0
+                )
                 img_str = base64.b64encode(buffer.getvalue()).decode()
-                display(HTML(f'<img src="data:image/png;base64,{img_str}"/>'))
-                print(f"Combined size: {combined.shape[1]} x {combined.shape[0]} px")
+                display(HTML(f'<img src="data:image/gif;base64,{img_str}"/>'))
+                print(f"Preview: {len(preview_frames)} frames, Size: {preview_frames[0].width}x{preview_frames[0].height} px")
+            else:
+                print("No frames to preview")
 
     def _convert(self, _=None):
         with self.status_output:
