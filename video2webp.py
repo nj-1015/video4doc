@@ -232,6 +232,12 @@ class VideoROISelector:
             style=style, layout=layout, continuous_update=False
         )
 
+        self.caption = widgets.Text(
+            value='', placeholder='Enter caption (optional)',
+            description='Caption:',
+            style=style, layout=layout
+        )
+
         self.preview_output = widgets.Output()
 
         # Link preview updates
@@ -289,6 +295,7 @@ class VideoROISelector:
         return widgets.VBox([
             widgets.HTML(f'<b>Video {self.index + 1}: {os.path.basename(self.video.filename)}</b>'),
             widgets.HTML(f'<small>{self.video.width}x{self.video.height}, {self.video.total_frames} frames</small>'),
+            self.caption,
             self.preview_frame,
             self.roi_x,
             self.roi_y,
@@ -358,6 +365,19 @@ class SideBySideConverter:
             value=False, description='Sync ROI position', style=style
         )
 
+        self.caption_position = widgets.RadioButtons(
+            options=[('Top', 'top'), ('Bottom', 'bottom'), ('None', 'none')],
+            value='bottom',
+            description='Caption:',
+            style=style
+        )
+
+        self.caption_size = widgets.IntSlider(
+            value=24, min=12, max=72,
+            step=2, description='Caption Size:',
+            style=style, layout=layout
+        )
+
         self.preview_btn = widgets.Button(description='Preview Combined', button_style='info')
         self.convert_btn = widgets.Button(description='Convert to WebP', button_style='success')
         self.preview_output = widgets.Output()
@@ -404,8 +424,48 @@ class SideBySideConverter:
         frame = frame[y1:y2, x1:x2]
         return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    def _combine_frames(self, frame_list):
+    def _add_caption(self, frame, caption):
+        """Add caption to a single frame."""
+        if not caption or self.caption_position.value == 'none':
+            return frame
+
+        img = Image.fromarray(frame)
+        font_size = self.caption_size.value
+        padding = 10
+        text_height = font_size + padding * 2
+
+        # Create new image with space for caption
+        if self.caption_position.value == 'top':
+            new_img = Image.new('RGB', (img.width, img.height + text_height), (0, 0, 0))
+            new_img.paste(img, (0, text_height))
+            text_y = padding
+        else:  # bottom
+            new_img = Image.new('RGB', (img.width, img.height + text_height), (0, 0, 0))
+            new_img.paste(img, (0, 0))
+            text_y = img.height + padding
+
+        # Draw caption
+        from PIL import ImageDraw, ImageFont
+        draw = ImageDraw.Draw(new_img)
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", font_size)
+        except:
+            font = ImageFont.load_default()
+
+        # Center text
+        bbox = draw.textbbox((0, 0), caption, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_x = (new_img.width - text_w) // 2
+        draw.text((text_x, text_y), caption, fill=(255, 255, 255), font=font)
+
+        return np.array(new_img)
+
+    def _combine_frames(self, frame_list, captions=None):
         """Combine multiple frames into one."""
+        # Add captions to individual frames first
+        if captions:
+            frame_list = [self._add_caption(f, c) for f, c in zip(frame_list, captions)]
+
         if self.layout_select.value == 'horizontal':
             # Match heights
             max_h = max(f.shape[0] for f in frame_list)
@@ -434,14 +494,16 @@ class SideBySideConverter:
             clear_output(wait=True)
             frame_num = self.frame_range.value[0]
             frames = []
+            captions = []
             for sel in self.selectors:
                 roi = sel.get_roi()
                 f = self._extract_roi_frame(sel.video, roi, frame_num)
                 if f is not None:
                     frames.append(f)
+                    captions.append(sel.caption.value)
 
             if len(frames) == len(self.videos):
-                combined = self._combine_frames(frames)
+                combined = self._combine_frames(frames, captions)
                 img = Image.fromarray(combined)
 
                 # Scale for preview
@@ -463,6 +525,7 @@ class SideBySideConverter:
 
             start_frame, end_frame = self.frame_range.value
             rois = [sel.get_roi() for sel in self.selectors]
+            captions = [sel.caption.value for sel in self.selectors]
             combined_frames = []
 
             for i in range(start_frame, end_frame + 1):
@@ -476,7 +539,7 @@ class SideBySideConverter:
                         frames.append(f)
 
                 if len(frames) == len(self.videos):
-                    combined = self._combine_frames(frames)
+                    combined = self._combine_frames(frames, captions)
                     combined_frames.append(Image.fromarray(combined))
 
                 if len(combined_frames) % 30 == 0:
@@ -521,6 +584,7 @@ class SideBySideConverter:
             widgets.HTML('<h3>2. Output settings</h3>'),
             self.frame_range,
             self.layout_select,
+            widgets.HBox([self.caption_position, self.caption_size]),
             self.quality,
             self.frame_skip,
             self.loop,
