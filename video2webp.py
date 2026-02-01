@@ -227,7 +227,7 @@ class WebPConverter:
 
         self.frame_skip = widgets.IntSlider(
             value=1, min=1, max=10,
-            step=1, description='Frame Skip:',
+            step=1, description='Every Nth:',
             style=style, layout=layout
         )
 
@@ -516,7 +516,7 @@ class SideBySideConverter:
 
         self.frame_skip = widgets.IntSlider(
             value=1, min=1, max=10,
-            step=1, description='Frame Skip:',
+            step=1, description='Every Nth:',
             style=style, layout=layout
         )
 
