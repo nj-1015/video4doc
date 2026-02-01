@@ -118,17 +118,19 @@ class GDriveFolderPicker:
         pass  # Could add double-click support
 
     def _create_folder(self, _=None):
-        """Create a new folder."""
+        """Create a new folder and navigate into it."""
         name = self.new_folder_name.value.strip()
         if name:
             new_path = os.path.join(self.current_path, name)
             try:
                 os.makedirs(new_path, exist_ok=True)
                 self.new_folder_name.value = ''
+                # Auto-navigate into the new folder
+                self.current_path = new_path
                 self._update_list()
                 with self.output:
                     clear_output(wait=True)
-                    print(f"Created: {name}")
+                    print(f"✓ Created and entered: {name}")
             except Exception as e:
                 with self.output:
                     clear_output(wait=True)
@@ -312,8 +314,11 @@ class WebPConverter:
             if self.save_to_gdrive.value:
                 gdrive_folder = self.gdrive_picker.get_path()
                 self.output_filename = f"{gdrive_folder}/{base_name}"
+                print(f"Saving to GDrive: {self.output_filename}")
             else:
                 self.output_filename = base_name
+                print(f"Saving locally: {self.output_filename}")
+                print("(Check 'Save to Google Drive' to save to GDrive folder)")
 
             frames[0].save(
                 self.output_filename, 'WEBP',
@@ -726,8 +731,11 @@ class SideBySideConverter:
             if self.save_to_gdrive.value:
                 gdrive_folder = self.gdrive_picker.get_path()
                 self.output_filename = f"{gdrive_folder}/{self.output_name.value}"
+                print(f"Saving to GDrive: {self.output_filename}")
             else:
                 self.output_filename = self.output_name.value
+                print(f"Saving locally: {self.output_filename}")
+                print("(Check 'Save to Google Drive' to save to GDrive folder)")
 
             combined_frames[0].save(
                 self.output_filename, 'WEBP',
