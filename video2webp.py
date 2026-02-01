@@ -85,6 +85,17 @@ class WebPConverter:
             value=True, description='Loop Animation', style=style
         )
 
+        self.save_to_gdrive = widgets.Checkbox(
+            value=False, description='Save to Google Drive', style=style
+        )
+
+        self.gdrive_path = widgets.Text(
+            value='/content/drive/MyDrive/',
+            description='GDrive Path:',
+            style=style, layout=layout,
+            placeholder='/content/drive/MyDrive/folder/'
+        )
+
         self.preview_output = widgets.Output()
         self.preview_btn = widgets.Button(description='Preview Frame', button_style='info')
         self.convert_btn = widgets.Button(description='Convert to WebP', button_style='success')
@@ -153,7 +164,23 @@ class WebPConverter:
             effective_fps = self.video.fps / self.frame_skip.value
             duration_ms = int(1000 / effective_fps)
 
-            self.output_filename = os.path.splitext(self.video.filename)[0] + '.webp'
+            # Determine output path
+            base_name = os.path.splitext(os.path.basename(self.video.filename))[0] + '.webp'
+            if self.save_to_gdrive.value:
+                try:
+                    from google.colab import drive
+                    if not os.path.exists('/content/drive/MyDrive'):
+                        print("Mounting Google Drive...")
+                        drive.mount('/content/drive')
+                except:
+                    print("Warning: Could not mount Google Drive")
+
+                gdrive_folder = self.gdrive_path.value.rstrip('/')
+                if not gdrive_folder:
+                    gdrive_folder = '/content/drive/MyDrive'
+                self.output_filename = f"{gdrive_folder}/{base_name}"
+            else:
+                self.output_filename = base_name
 
             frames[0].save(
                 self.output_filename, 'WEBP',
@@ -166,6 +193,8 @@ class WebPConverter:
             file_size = os.path.getsize(self.output_filename) / (1024 * 1024)
             print(f"\nDone! Saved: {self.output_filename}")
             print(f"Frames: {len(frames)}, Size: {file_size:.2f} MB")
+            if self.save_to_gdrive.value:
+                print("File saved to Google Drive!")
 
     def show(self):
         """Display the converter UI."""
@@ -176,6 +205,7 @@ class WebPConverter:
             self.crop_x, self.crop_y,
             widgets.HTML('<h4>Output Settings</h4>'),
             self.quality, self.scale, self.frame_skip, self.loop,
+            widgets.HBox([self.save_to_gdrive, self.gdrive_path]),
             widgets.HBox([self.preview_btn, self.convert_btn]),
             self.preview_output,
             self.status_output
@@ -359,6 +389,17 @@ class SideBySideConverter:
             value='side_by_side.webp',
             description='Output File:',
             style=style, layout=layout
+        )
+
+        self.save_to_gdrive = widgets.Checkbox(
+            value=False, description='Save to Google Drive', style=style
+        )
+
+        self.gdrive_path = widgets.Text(
+            value='/content/drive/MyDrive/',
+            description='GDrive Path:',
+            style=style, layout=layout,
+            placeholder='/content/drive/MyDrive/folder/'
         )
 
         self.sync_roi = widgets.Checkbox(
@@ -552,7 +593,23 @@ class SideBySideConverter:
             effective_fps = self.videos[0].fps / self.frame_skip.value
             duration_ms = int(1000 / effective_fps)
 
-            self.output_filename = self.output_name.value
+            # Determine output path
+            if self.save_to_gdrive.value:
+                # Mount Google Drive if needed
+                try:
+                    from google.colab import drive
+                    if not os.path.exists('/content/drive/MyDrive'):
+                        print("Mounting Google Drive...")
+                        drive.mount('/content/drive')
+                except:
+                    print("Warning: Could not mount Google Drive")
+
+                gdrive_folder = self.gdrive_path.value.rstrip('/')
+                if not gdrive_folder:
+                    gdrive_folder = '/content/drive/MyDrive'
+                self.output_filename = f"{gdrive_folder}/{self.output_name.value}"
+            else:
+                self.output_filename = self.output_name.value
 
             combined_frames[0].save(
                 self.output_filename, 'WEBP',
@@ -565,6 +622,8 @@ class SideBySideConverter:
             file_size = os.path.getsize(self.output_filename) / (1024 * 1024)
             print(f"\nDone! Saved: {self.output_filename}")
             print(f"Frames: {len(combined_frames)}, Size: {file_size:.2f} MB")
+            if self.save_to_gdrive.value:
+                print("File saved to Google Drive!")
 
     def show(self):
         """Display the converter UI."""
@@ -588,6 +647,7 @@ class SideBySideConverter:
             self.frame_skip,
             self.loop,
             self.output_name,
+            widgets.HBox([self.save_to_gdrive, self.gdrive_path]),
             widgets.HBox([self.preview_btn, self.convert_btn]),
             self.preview_output,
             self.status_output
