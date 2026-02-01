@@ -235,6 +235,51 @@ class WebPConverter:
             value=True, description='Loop Animation', style=style
         )
 
+        self.pingpong = widgets.Checkbox(
+            value=False, description='Ping-pong (boomerang)', style=style
+        )
+
+        self.speed = widgets.FloatSlider(
+            value=1.0, min=0.25, max=4.0,
+            step=0.25, description='Speed:',
+            style=style, layout=layout
+        )
+
+        self.max_size = widgets.IntSlider(
+            value=0, min=0, max=1920,
+            step=100, description='Max Size:',
+            style=style, layout=layout
+        )  # 0 means no limit
+
+        self.output_format = widgets.RadioButtons(
+            options=[('WebP', 'webp'), ('GIF', 'gif')],
+            value='webp', description='Format:',
+            style=style
+        )
+
+        self.border_size = widgets.IntSlider(
+            value=0, min=0, max=50,
+            step=2, description='Border:',
+            style=style, layout=layout
+        )
+
+        self.border_color = widgets.ColorPicker(
+            value='#000000', description='Border Color:',
+            style=style
+        )
+
+        self.brightness = widgets.FloatSlider(
+            value=1.0, min=0.5, max=2.0,
+            step=0.1, description='Brightness:',
+            style=style, layout=layout
+        )
+
+        self.contrast = widgets.FloatSlider(
+            value=1.0, min=0.5, max=2.0,
+            step=0.1, description='Contrast:',
+            style=style, layout=layout
+        )
+
         self.save_to_gdrive = widgets.Checkbox(
             value=False, description='Save to Google Drive', style=style
         )
@@ -243,12 +288,38 @@ class WebPConverter:
 
         self.preview_output = widgets.Output()
         self.preview_btn = widgets.Button(description='Preview Frame', button_style='info')
-        self.convert_btn = widgets.Button(description='Convert to WebP', button_style='success')
+        self.convert_btn = widgets.Button(description='Convert', button_style='success')
+        self.thumbnail_btn = widgets.Button(description='Save Thumbnail', button_style='warning')
         self.status_output = widgets.Output()
 
     def _setup_preview(self):
         self.preview_btn.on_click(self._show_preview)
         self.convert_btn.on_click(self._convert)
+        self.thumbnail_btn.on_click(self._save_thumbnail)
+
+    def _apply_adjustments(self, frame):
+        """Apply brightness, contrast, border, and size limit."""
+        # Brightness and contrast
+        if self.brightness.value != 1.0 or self.contrast.value != 1.0:
+            frame = cv2.convertScaleAbs(frame, alpha=self.contrast.value, beta=(self.brightness.value - 1) * 127)
+
+        # Max size limit
+        if self.max_size.value > 0:
+            h, w = frame.shape[:2]
+            if w > self.max_size.value or h > self.max_size.value:
+                ratio = self.max_size.value / max(w, h)
+                frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)))
+
+        # Border
+        if self.border_size.value > 0:
+            color_hex = self.border_color.value.lstrip('#')
+            color_rgb = tuple(int(color_hex[i:i+2], 16) for i in (0, 2, 4))
+            frame = cv2.copyMakeBorder(frame,
+                self.border_size.value, self.border_size.value,
+                self.border_size.value, self.border_size.value,
+                cv2.BORDER_CONSTANT, value=color_rgb)
+
+        return frame
 
     def _get_frame(self, frame_num):
         """Extract and process a single frame."""
@@ -269,7 +340,24 @@ class WebPConverter:
             new_h = int(frame.shape[0] * self.scale.value)
             frame = cv2.resize(frame, (new_w, new_h))
 
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame = self._apply_adjustments(frame)
+        return frame
+
+    def _save_thumbnail(self, _=None):
+        """Save current frame as PNG thumbnail."""
+        with self.status_output:
+            clear_output(wait=True)
+            frame = self._get_frame(self.frame_range.value[0])
+            if frame is not None:
+                img = Image.fromarray(frame)
+                base_name = os.path.splitext(os.path.basename(self.video.filename))[0] + '_thumb.png'
+                if self.save_to_gdrive.value:
+                    thumb_path = f"{self.gdrive_picker.get_path()}/{base_name}"
+                else:
+                    thumb_path = base_name
+                img.save(thumb_path, 'PNG')
+                print(f"Thumbnail saved: {thumb_path}")
 
     def _show_preview(self, _=None):
         with self.preview_output:
@@ -286,7 +374,8 @@ class WebPConverter:
     def _convert(self, _=None):
         with self.status_output:
             clear_output(wait=True)
-            print("Converting to animated WebP...")
+            fmt = self.output_format.value.upper()
+            print(f"Converting to animated {fmt}...")
 
             start_frame, end_frame = self.frame_range.value
             frames = []
@@ -306,11 +395,17 @@ class WebPConverter:
                 print("Error: No frames extracted!")
                 return
 
-            effective_fps = self.video.fps / self.frame_skip.value
+            # Ping-pong: append reversed frames (excluding first and last to avoid stutter)
+            if self.pingpong.value and len(frames) > 2:
+                frames = frames + frames[-2:0:-1]
+
+            # Calculate duration with speed adjustment
+            effective_fps = (self.video.fps / self.frame_skip.value) * self.speed.value
             duration_ms = int(1000 / effective_fps)
 
             # Determine output path
-            base_name = os.path.splitext(os.path.basename(self.video.filename))[0] + '.webp'
+            ext = self.output_format.value
+            base_name = os.path.splitext(os.path.basename(self.video.filename))[0] + f'.{ext}'
             if self.save_to_gdrive.value:
                 gdrive_folder = self.gdrive_picker.get_path()
                 self.output_filename = f"{gdrive_folder}/{base_name}"
@@ -318,21 +413,27 @@ class WebPConverter:
             else:
                 self.output_filename = base_name
                 print(f"Saving locally: {self.output_filename}")
-                print("(Check 'Save to Google Drive' to save to GDrive folder)")
 
-            frames[0].save(
-                self.output_filename, 'WEBP',
-                save_all=True, append_images=frames[1:],
-                duration=duration_ms,
-                loop=0 if self.loop.value else 1,
-                quality=self.quality.value
-            )
+            # Save animation
+            if self.output_format.value == 'gif':
+                frames[0].save(
+                    self.output_filename, 'GIF',
+                    save_all=True, append_images=frames[1:],
+                    duration=duration_ms,
+                    loop=0 if self.loop.value else 1
+                )
+            else:
+                frames[0].save(
+                    self.output_filename, 'WEBP',
+                    save_all=True, append_images=frames[1:],
+                    duration=duration_ms,
+                    loop=0 if self.loop.value else 1,
+                    quality=self.quality.value
+                )
 
             file_size = os.path.getsize(self.output_filename) / (1024 * 1024)
             print(f"\nDone! Saved: {self.output_filename}")
             print(f"Frames: {len(frames)}, Size: {file_size:.2f} MB")
-            if self.save_to_gdrive.value:
-                print("File saved to Google Drive!")
 
     def show(self):
         """Display the converter UI."""
@@ -341,11 +442,17 @@ class WebPConverter:
             self.frame_range,
             widgets.HTML('<h4>Crop Region</h4>'),
             self.crop_x, self.crop_y,
+            widgets.HTML('<h4>Adjustments</h4>'),
+            widgets.HBox([self.brightness, self.contrast]),
+            widgets.HBox([self.border_size, self.border_color]),
             widgets.HTML('<h4>Output Settings</h4>'),
-            self.quality, self.scale, self.frame_skip, self.loop,
+            widgets.HBox([self.output_format, self.quality]),
+            widgets.HBox([self.scale, self.max_size]),
+            self.frame_skip,
+            widgets.HBox([self.speed, self.loop, self.pingpong]),
             self.save_to_gdrive,
             self.gdrive_picker.get_widget(),
-            widgets.HBox([self.preview_btn, self.convert_btn]),
+            widgets.HBox([self.preview_btn, self.convert_btn, self.thumbnail_btn]),
             self.preview_output,
             self.status_output
         ]))
@@ -535,9 +642,60 @@ class SideBySideConverter:
             value=True, description='Loop Animation', style=style
         )
 
+        self.pingpong = widgets.Checkbox(
+            value=False, description='Ping-pong', style=style
+        )
+
+        self.speed = widgets.FloatSlider(
+            value=1.0, min=0.25, max=4.0,
+            step=0.25, description='Speed:',
+            style=style, layout=layout
+        )
+
+        self.max_size = widgets.IntSlider(
+            value=0, min=0, max=1920,
+            step=100, description='Max Size:',
+            style=style, layout=layout
+        )
+
+        self.output_format = widgets.RadioButtons(
+            options=[('WebP', 'webp'), ('GIF', 'gif')],
+            value='webp', description='Format:',
+            style=style
+        )
+
+        self.border_size = widgets.IntSlider(
+            value=0, min=0, max=50,
+            step=2, description='Border:',
+            style=style, layout=layout
+        )
+
+        self.border_color = widgets.ColorPicker(
+            value='#000000', description='Border Color:',
+            style=style
+        )
+
+        self.brightness = widgets.FloatSlider(
+            value=1.0, min=0.5, max=2.0,
+            step=0.1, description='Brightness:',
+            style=style, layout=layout
+        )
+
+        self.contrast = widgets.FloatSlider(
+            value=1.0, min=0.5, max=2.0,
+            step=0.1, description='Contrast:',
+            style=style, layout=layout
+        )
+
+        self.transition = widgets.Dropdown(
+            options=[('None', 'none'), ('Fade', 'fade'), ('Wipe Left', 'wipe_left'), ('Wipe Right', 'wipe_right')],
+            value='none', description='Transition:',
+            style=style, layout=layout
+        )
+
         self.output_name = widgets.Text(
-            value='side_by_side.webp',
-            description='Output File:',
+            value='output',
+            description='Output Name:',
             style=style, layout=layout
         )
 
@@ -564,13 +722,138 @@ class SideBySideConverter:
             style=style, layout=layout
         )
 
-        self.preview_btn = widgets.Button(description='Preview Combined', button_style='info')
-        self.convert_btn = widgets.Button(description='Convert to WebP', button_style='success')
+        self.preview_btn = widgets.Button(description='Preview', button_style='info')
+        self.convert_btn = widgets.Button(description='Convert', button_style='success')
+        self.thumbnail_btn = widgets.Button(description='Thumbnail', button_style='warning')
+        self.comparison_btn = widgets.Button(description='Interactive HTML', button_style='')
         self.preview_output = widgets.Output()
         self.status_output = widgets.Output()
 
         self.preview_btn.on_click(self._show_preview)
         self.convert_btn.on_click(self._convert)
+        self.thumbnail_btn.on_click(self._save_thumbnail)
+        self.comparison_btn.on_click(self._create_interactive_html)
+
+    def _apply_adjustments(self, frame):
+        """Apply brightness, contrast, border, and size limit."""
+        if self.brightness.value != 1.0 or self.contrast.value != 1.0:
+            frame = cv2.convertScaleAbs(frame, alpha=self.contrast.value, beta=(self.brightness.value - 1) * 127)
+
+        if self.max_size.value > 0:
+            h, w = frame.shape[:2]
+            if w > self.max_size.value or h > self.max_size.value:
+                ratio = self.max_size.value / max(w, h)
+                frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)))
+
+        if self.border_size.value > 0:
+            color_hex = self.border_color.value.lstrip('#')
+            color_rgb = tuple(int(color_hex[i:i+2], 16) for i in (0, 2, 4))
+            frame = cv2.copyMakeBorder(frame,
+                self.border_size.value, self.border_size.value,
+                self.border_size.value, self.border_size.value,
+                cv2.BORDER_CONSTANT, value=color_rgb)
+        return frame
+
+    def _save_thumbnail(self, _=None):
+        """Save first combined frame as PNG thumbnail."""
+        with self.status_output:
+            clear_output(wait=True)
+            frame_num = self.frame_range.value[0]
+            frames = []
+            captions = [sel.caption.value for sel in self.selectors]
+            for sel in self.selectors:
+                roi = sel.get_roi()
+                f = self._extract_roi_frame(sel.video, roi, frame_num)
+                if f is not None:
+                    frames.append(f)
+            if len(frames) == len(self.videos):
+                combined = self._combine_frames(frames, captions)
+                combined = self._apply_adjustments(combined)
+                img = Image.fromarray(combined)
+                thumb_name = f"{self.output_name.value}_thumb.png"
+                if self.save_to_gdrive.value:
+                    thumb_path = f"{self.gdrive_picker.get_path()}/{thumb_name}"
+                else:
+                    thumb_path = thumb_name
+                img.save(thumb_path, 'PNG')
+                print(f"Thumbnail saved: {thumb_path}")
+
+    def _create_interactive_html(self, _=None):
+        """Create interactive HTML comparison slider (for 2 videos in split mode)."""
+        with self.status_output:
+            clear_output(wait=True)
+            if len(self.videos) != 2:
+                print("Interactive HTML requires exactly 2 videos")
+                return
+
+            frame_num = self.frame_range.value[0]
+            frames = []
+            for sel in self.selectors:
+                roi = sel.get_roi()
+                f = self._extract_roi_frame(sel.video, roi, frame_num)
+                if f is not None:
+                    frames.append(f)
+
+            if len(frames) != 2:
+                print("Could not extract frames")
+                return
+
+            # Resize to same dimensions
+            h = max(frames[0].shape[0], frames[1].shape[0])
+            w = max(frames[0].shape[1], frames[1].shape[1])
+            f1 = cv2.resize(frames[0], (w, h))
+            f2 = cv2.resize(frames[1], (w, h))
+
+            # Convert to base64
+            img1 = Image.fromarray(f1)
+            img2 = Image.fromarray(f2)
+            buf1, buf2 = io.BytesIO(), io.BytesIO()
+            img1.save(buf1, 'PNG')
+            img2.save(buf2, 'PNG')
+            b64_1 = base64.b64encode(buf1.getvalue()).decode()
+            b64_2 = base64.b64encode(buf2.getvalue()).decode()
+
+            captions = [sel.caption.value for sel in self.selectors]
+            cap1 = captions[0] if captions[0] else 'Before'
+            cap2 = captions[1] if len(captions) > 1 and captions[1] else 'After'
+
+            html_content = f'''<!DOCTYPE html>
+<html><head><style>
+.comparison-container {{width:{w}px;position:relative;overflow:hidden;}}
+.comparison-container img {{display:block;width:100%;}}
+.img-overlay {{position:absolute;top:0;left:0;width:50%;overflow:hidden;}}
+.slider {{position:absolute;top:0;bottom:0;width:4px;background:#fff;left:50%;cursor:ew-resize;}}
+.slider:after {{content:"";position:absolute;top:50%;left:-18px;width:40px;height:40px;border-radius:50%;background:#fff;transform:translateY(-50%);box-shadow:0 2px 6px rgba(0,0,0,0.3);}}
+.label {{position:absolute;bottom:10px;padding:5px 10px;background:rgba(0,0,0,0.7);color:#fff;font-family:sans-serif;}}
+.label-left {{left:10px;}}
+.label-right {{right:10px;}}
+</style></head><body>
+<div class="comparison-container" id="container">
+<img src="data:image/png;base64,{b64_2}" alt="After">
+<div class="img-overlay" id="overlay"><img src="data:image/png;base64,{b64_1}" alt="Before"></div>
+<div class="slider" id="slider"></div>
+<span class="label label-left">{cap1}</span>
+<span class="label label-right">{cap2}</span>
+</div>
+<script>
+const container=document.getElementById("container"),overlay=document.getElementById("overlay"),slider=document.getElementById("slider");
+let isDragging=false;
+slider.addEventListener("mousedown",()=>isDragging=true);
+document.addEventListener("mouseup",()=>isDragging=false);
+container.addEventListener("mousemove",e=>{{if(!isDragging)return;const rect=container.getBoundingClientRect();let x=e.clientX-rect.left;x=Math.max(0,Math.min(x,rect.width));const pct=(x/rect.width)*100;overlay.style.width=pct+"%";slider.style.left=pct+"%";}});
+container.addEventListener("click",e=>{{const rect=container.getBoundingClientRect();let x=e.clientX-rect.left;const pct=(x/rect.width)*100;overlay.style.width=pct+"%";slider.style.left=pct+"%";}});
+</script></body></html>'''
+
+            html_name = f"{self.output_name.value}_comparison.html"
+            if self.save_to_gdrive.value:
+                html_path = f"{self.gdrive_picker.get_path()}/{html_name}"
+            else:
+                html_path = html_name
+
+            with open(html_path, 'w') as f:
+                f.write(html_content)
+            print(f"Interactive HTML saved: {html_path}")
+            print("Open in browser to use the draggable comparison slider")
 
     def _setup_roi_sync(self):
         """Setup ROI synchronization between videos."""
@@ -791,7 +1074,8 @@ class SideBySideConverter:
     def _convert(self, _=None):
         with self.status_output:
             clear_output(wait=True)
-            print("Converting to animated WebP...")
+            fmt = self.output_format.value.upper()
+            print(f"Converting to animated {fmt}...")
 
             start_frame, end_frame = self.frame_range.value
             rois = [sel.get_roi() for sel in self.selectors]
@@ -810,6 +1094,7 @@ class SideBySideConverter:
 
                 if len(frames) == len(self.videos):
                     combined = self._combine_frames(frames, captions)
+                    combined = self._apply_adjustments(combined)
                     combined_frames.append(Image.fromarray(combined))
 
                 if len(combined_frames) % 30 == 0:
@@ -819,33 +1104,45 @@ class SideBySideConverter:
                 print("Error: No frames extracted!")
                 return
 
-            # Use FPS from first video
-            effective_fps = self.videos[0].fps / self.frame_skip.value
+            # Ping-pong: append reversed frames
+            if self.pingpong.value and len(combined_frames) > 2:
+                combined_frames = combined_frames + combined_frames[-2:0:-1]
+
+            # Use FPS from first video with speed adjustment
+            effective_fps = (self.videos[0].fps / self.frame_skip.value) * self.speed.value
             duration_ms = int(1000 / effective_fps)
 
             # Determine output path
+            ext = self.output_format.value
+            output_name = f"{self.output_name.value}.{ext}"
             if self.save_to_gdrive.value:
                 gdrive_folder = self.gdrive_picker.get_path()
-                self.output_filename = f"{gdrive_folder}/{self.output_name.value}"
+                self.output_filename = f"{gdrive_folder}/{output_name}"
                 print(f"Saving to GDrive: {self.output_filename}")
             else:
-                self.output_filename = self.output_name.value
+                self.output_filename = output_name
                 print(f"Saving locally: {self.output_filename}")
-                print("(Check 'Save to Google Drive' to save to GDrive folder)")
 
-            combined_frames[0].save(
-                self.output_filename, 'WEBP',
-                save_all=True, append_images=combined_frames[1:],
-                duration=duration_ms,
-                loop=0 if self.loop.value else 1,
-                quality=self.quality.value
-            )
+            # Save animation
+            if self.output_format.value == 'gif':
+                combined_frames[0].save(
+                    self.output_filename, 'GIF',
+                    save_all=True, append_images=combined_frames[1:],
+                    duration=duration_ms,
+                    loop=0 if self.loop.value else 1
+                )
+            else:
+                combined_frames[0].save(
+                    self.output_filename, 'WEBP',
+                    save_all=True, append_images=combined_frames[1:],
+                    duration=duration_ms,
+                    loop=0 if self.loop.value else 1,
+                    quality=self.quality.value
+                )
 
             file_size = os.path.getsize(self.output_filename) / (1024 * 1024)
             print(f"\nDone! Saved: {self.output_filename}")
             print(f"Frames: {len(combined_frames)}, Size: {file_size:.2f} MB")
-            if self.save_to_gdrive.value:
-                print("File saved to Google Drive!")
 
     def show(self):
         """Display the converter UI."""
@@ -861,18 +1158,23 @@ class SideBySideConverter:
             widgets.HTML('<h3>1. Select ROI for each video</h3>'),
             self.sync_roi,
             roi_box,
-            widgets.HTML('<h3>2. Output settings</h3>'),
+            widgets.HTML('<h3>2. Layout</h3>'),
             self.frame_range,
             self.layout_select,
             widgets.HBox([self.split_position, self.split_line]),
             widgets.HBox([self.caption_position, self.caption_size]),
-            self.quality,
+            widgets.HTML('<h3>3. Adjustments</h3>'),
+            widgets.HBox([self.brightness, self.contrast]),
+            widgets.HBox([self.border_size, self.border_color]),
+            widgets.HTML('<h3>4. Output</h3>'),
+            widgets.HBox([self.output_format, self.quality]),
+            widgets.HBox([self.max_size, self.speed]),
             self.frame_skip,
-            self.loop,
+            widgets.HBox([self.loop, self.pingpong]),
             self.output_name,
             self.save_to_gdrive,
             self.gdrive_picker.get_widget(),
-            widgets.HBox([self.preview_btn, self.convert_btn]),
+            widgets.HBox([self.preview_btn, self.convert_btn, self.thumbnail_btn, self.comparison_btn]),
             self.preview_output,
             self.status_output
         ]))
