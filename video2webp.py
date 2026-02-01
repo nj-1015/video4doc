@@ -306,7 +306,9 @@ class SideBySideConverter:
         """
         self.videos = video_list
         self.selectors = [VideoROISelector(v, i) for i, v in enumerate(video_list)]
+        self._syncing = False  # Flag to prevent recursive sync
         self._create_widgets()
+        self._setup_roi_sync()
 
     def _create_widgets(self):
         style = {'description_width': '120px'}
@@ -352,6 +354,10 @@ class SideBySideConverter:
             style=style, layout=layout
         )
 
+        self.sync_roi = widgets.Checkbox(
+            value=False, description='Sync ROI position', style=style
+        )
+
         self.preview_btn = widgets.Button(description='Preview Combined', button_style='info')
         self.convert_btn = widgets.Button(description='Convert to WebP', button_style='success')
         self.preview_output = widgets.Output()
@@ -359,6 +365,30 @@ class SideBySideConverter:
 
         self.preview_btn.on_click(self._show_preview)
         self.convert_btn.on_click(self._convert)
+
+    def _setup_roi_sync(self):
+        """Setup ROI synchronization between videos."""
+        def make_sync_handler(source_idx, axis):
+            def handler(change):
+                if not self.sync_roi.value or self._syncing:
+                    return
+                self._syncing = True
+                try:
+                    for i, sel in enumerate(self.selectors):
+                        if i != source_idx:
+                            slider = sel.roi_x if axis == 'x' else sel.roi_y
+                            # Clamp values to target video dimensions
+                            max_val = sel.video.width if axis == 'x' else sel.video.height
+                            new_val = (min(change['new'][0], max_val),
+                                       min(change['new'][1], max_val))
+                            slider.value = new_val
+                finally:
+                    self._syncing = False
+            return handler
+
+        for i, sel in enumerate(self.selectors):
+            sel.roi_x.observe(make_sync_handler(i, 'x'), names='value')
+            sel.roi_y.observe(make_sync_handler(i, 'y'), names='value')
 
     def _extract_roi_frame(self, video, roi, frame_num):
         """Extract a cropped frame from video."""
@@ -486,6 +516,7 @@ class SideBySideConverter:
 
         display(widgets.VBox([
             widgets.HTML('<h3>1. Select ROI for each video</h3>'),
+            self.sync_roi,
             roi_box,
             widgets.HTML('<h3>2. Output settings</h3>'),
             self.frame_range,
