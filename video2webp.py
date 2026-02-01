@@ -10,6 +10,154 @@ import base64
 import os
 
 
+class GDriveFolderPicker:
+    """Interactive Google Drive folder browser with create folder capability."""
+
+    def __init__(self, start_path='/content/drive/MyDrive'):
+        self.base_path = '/content/drive/MyDrive'
+        self.current_path = start_path
+        self._mounted = False
+        self._create_widgets()
+
+    def _mount_drive(self):
+        """Mount Google Drive if not already mounted."""
+        if self._mounted:
+            return True
+        try:
+            from google.colab import drive
+            if not os.path.exists(self.base_path):
+                drive.mount('/content/drive')
+            self._mounted = True
+            return True
+        except Exception as e:
+            print(f"Could not mount Google Drive: {e}")
+            return False
+
+    def _create_widgets(self):
+        self.output = widgets.Output()
+
+        self.path_label = widgets.HTML(
+            value=f'<b>Current:</b> {self.current_path}'
+        )
+
+        self.folder_list = widgets.Select(
+            options=[],
+            rows=8,
+            description='',
+            layout=widgets.Layout(width='100%')
+        )
+
+        self.up_btn = widgets.Button(
+            description='⬆ Up',
+            button_style='info',
+            layout=widgets.Layout(width='80px')
+        )
+
+        self.open_btn = widgets.Button(
+            description='📂 Open',
+            button_style='primary',
+            layout=widgets.Layout(width='80px')
+        )
+
+        self.new_folder_name = widgets.Text(
+            placeholder='New folder name',
+            layout=widgets.Layout(width='200px')
+        )
+
+        self.create_btn = widgets.Button(
+            description='➕ Create',
+            button_style='success',
+            layout=widgets.Layout(width='80px')
+        )
+
+        self.refresh_btn = widgets.Button(
+            description='🔄',
+            layout=widgets.Layout(width='50px')
+        )
+
+        self.up_btn.on_click(self._go_up)
+        self.open_btn.on_click(self._open_folder)
+        self.create_btn.on_click(self._create_folder)
+        self.refresh_btn.on_click(self._refresh)
+        self.folder_list.observe(self._on_select, names='value')
+
+    def _list_folders(self, path):
+        """List folders in the given path."""
+        folders = []
+        try:
+            if os.path.exists(path):
+                for item in sorted(os.listdir(path)):
+                    item_path = os.path.join(path, item)
+                    if os.path.isdir(item_path):
+                        folders.append(item)
+        except PermissionError:
+            pass
+        return folders
+
+    def _update_list(self):
+        """Update the folder list display."""
+        folders = self._list_folders(self.current_path)
+        self.folder_list.options = folders if folders else ['(no subfolders)']
+        self.path_label.value = f'<b>📁 Current:</b> <code>{self.current_path}</code>'
+
+    def _go_up(self, _=None):
+        """Navigate to parent folder."""
+        if self.current_path != self.base_path:
+            self.current_path = os.path.dirname(self.current_path)
+            self._update_list()
+
+    def _open_folder(self, _=None):
+        """Open selected folder."""
+        selected = self.folder_list.value
+        if selected and selected != '(no subfolders)':
+            self.current_path = os.path.join(self.current_path, selected)
+            self._update_list()
+
+    def _on_select(self, change):
+        """Handle double-click on folder."""
+        pass  # Could add double-click support
+
+    def _create_folder(self, _=None):
+        """Create a new folder."""
+        name = self.new_folder_name.value.strip()
+        if name:
+            new_path = os.path.join(self.current_path, name)
+            try:
+                os.makedirs(new_path, exist_ok=True)
+                self.new_folder_name.value = ''
+                self._update_list()
+                with self.output:
+                    clear_output(wait=True)
+                    print(f"Created: {name}")
+            except Exception as e:
+                with self.output:
+                    clear_output(wait=True)
+                    print(f"Error: {e}")
+
+    def _refresh(self, _=None):
+        """Refresh folder list."""
+        if not self._mounted:
+            with self.output:
+                clear_output(wait=True)
+                print("Mounting Google Drive...")
+            self._mount_drive()
+        self._update_list()
+
+    def get_path(self):
+        """Return the currently selected path."""
+        return self.current_path
+
+    def get_widget(self):
+        """Return the folder picker widget."""
+        return widgets.VBox([
+            self.path_label,
+            self.folder_list,
+            widgets.HBox([self.up_btn, self.open_btn, self.refresh_btn]),
+            widgets.HBox([self.new_folder_name, self.create_btn]),
+            self.output
+        ], layout=widgets.Layout(width='400px', border='1px solid #ccc', padding='10px'))
+
+
 class VideoInfo:
     """Stores video metadata."""
     def __init__(self, filename):
@@ -89,12 +237,7 @@ class WebPConverter:
             value=False, description='Save to Google Drive', style=style
         )
 
-        self.gdrive_path = widgets.Text(
-            value='/content/drive/MyDrive/',
-            description='GDrive Path:',
-            style=style, layout=layout,
-            placeholder='/content/drive/MyDrive/folder/'
-        )
+        self.gdrive_picker = GDriveFolderPicker()
 
         self.preview_output = widgets.Output()
         self.preview_btn = widgets.Button(description='Preview Frame', button_style='info')
@@ -167,17 +310,7 @@ class WebPConverter:
             # Determine output path
             base_name = os.path.splitext(os.path.basename(self.video.filename))[0] + '.webp'
             if self.save_to_gdrive.value:
-                try:
-                    from google.colab import drive
-                    if not os.path.exists('/content/drive/MyDrive'):
-                        print("Mounting Google Drive...")
-                        drive.mount('/content/drive')
-                except:
-                    print("Warning: Could not mount Google Drive")
-
-                gdrive_folder = self.gdrive_path.value.rstrip('/')
-                if not gdrive_folder:
-                    gdrive_folder = '/content/drive/MyDrive'
+                gdrive_folder = self.gdrive_picker.get_path()
                 self.output_filename = f"{gdrive_folder}/{base_name}"
             else:
                 self.output_filename = base_name
@@ -205,7 +338,8 @@ class WebPConverter:
             self.crop_x, self.crop_y,
             widgets.HTML('<h4>Output Settings</h4>'),
             self.quality, self.scale, self.frame_skip, self.loop,
-            widgets.HBox([self.save_to_gdrive, self.gdrive_path]),
+            self.save_to_gdrive,
+            self.gdrive_picker.get_widget(),
             widgets.HBox([self.preview_btn, self.convert_btn]),
             self.preview_output,
             self.status_output
@@ -395,12 +529,7 @@ class SideBySideConverter:
             value=False, description='Save to Google Drive', style=style
         )
 
-        self.gdrive_path = widgets.Text(
-            value='/content/drive/MyDrive/',
-            description='GDrive Path:',
-            style=style, layout=layout,
-            placeholder='/content/drive/MyDrive/folder/'
-        )
+        self.gdrive_picker = GDriveFolderPicker()
 
         self.sync_roi = widgets.Checkbox(
             value=False, description='Sync ROI position', style=style
@@ -595,18 +724,7 @@ class SideBySideConverter:
 
             # Determine output path
             if self.save_to_gdrive.value:
-                # Mount Google Drive if needed
-                try:
-                    from google.colab import drive
-                    if not os.path.exists('/content/drive/MyDrive'):
-                        print("Mounting Google Drive...")
-                        drive.mount('/content/drive')
-                except:
-                    print("Warning: Could not mount Google Drive")
-
-                gdrive_folder = self.gdrive_path.value.rstrip('/')
-                if not gdrive_folder:
-                    gdrive_folder = '/content/drive/MyDrive'
+                gdrive_folder = self.gdrive_picker.get_path()
                 self.output_filename = f"{gdrive_folder}/{self.output_name.value}"
             else:
                 self.output_filename = self.output_name.value
@@ -647,7 +765,8 @@ class SideBySideConverter:
             self.frame_skip,
             self.loop,
             self.output_name,
-            widgets.HBox([self.save_to_gdrive, self.gdrive_path]),
+            self.save_to_gdrive,
+            self.gdrive_picker.get_widget(),
             widgets.HBox([self.preview_btn, self.convert_btn]),
             self.preview_output,
             self.status_output
