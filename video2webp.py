@@ -502,10 +502,21 @@ class SideBySideConverter:
 
         self.layout_select = widgets.RadioButtons(
             options=[('Horizontal (side by side)', 'horizontal'),
-                     ('Vertical (stacked)', 'vertical')],
+                     ('Vertical (stacked)', 'vertical'),
+                     ('Split Screen (2 videos only)', 'split')],
             value='horizontal',
             description='Layout:',
             style=style
+        )
+
+        self.split_position = widgets.IntSlider(
+            value=50, min=10, max=90,
+            step=5, description='Split %:',
+            style=style, layout=layout
+        )
+
+        self.split_line = widgets.Checkbox(
+            value=True, description='Show split line', style=style
         )
 
         self.quality = widgets.IntSlider(
@@ -636,11 +647,63 @@ class SideBySideConverter:
 
     def _combine_frames(self, frame_list, captions=None):
         """Combine multiple frames into one."""
-        # Add captions to individual frames first
-        if captions:
+        # Add captions to individual frames first (except for split mode)
+        if captions and self.layout_select.value != 'split':
             frame_list = [self._add_caption(f, c) for f, c in zip(frame_list, captions)]
 
-        if self.layout_select.value == 'horizontal':
+        if self.layout_select.value == 'split':
+            # Split screen mode (2 videos only)
+            if len(frame_list) < 2:
+                return frame_list[0] if frame_list else None
+
+            f1, f2 = frame_list[0], frame_list[1]
+
+            # Resize both to same dimensions (use larger of each dimension)
+            target_h = max(f1.shape[0], f2.shape[0])
+            target_w = max(f1.shape[1], f2.shape[1])
+
+            f1 = cv2.resize(f1, (target_w, target_h))
+            f2 = cv2.resize(f2, (target_w, target_h))
+
+            # Calculate split position
+            split_x = int(target_w * self.split_position.value / 100)
+
+            # Create combined frame
+            combined = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+            combined[:, :split_x] = f1[:, :split_x]
+            combined[:, split_x:] = f2[:, split_x:]
+
+            # Draw split line
+            if self.split_line.value:
+                cv2.line(combined, (split_x, 0), (split_x, target_h), (255, 255, 255), 2)
+
+            # Add captions for split mode (overlay on the image)
+            if captions:
+                font_size = self.caption_size.value
+                font_scale = font_size / 25.0
+                thickness = max(2, int(font_size / 20))
+                font = cv2.FONT_HERSHEY_SIMPLEX
+
+                # Caption 1 on left side
+                if captions[0]:
+                    (tw, th), _ = cv2.getTextSize(captions[0], font, font_scale, thickness)
+                    tx = 10
+                    ty = target_h - 20
+                    # Draw background
+                    cv2.rectangle(combined, (tx - 5, ty - th - 5), (tx + tw + 5, ty + 5), (0, 0, 0), -1)
+                    cv2.putText(combined, captions[0], (tx, ty), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+                # Caption 2 on right side
+                if len(captions) > 1 and captions[1]:
+                    (tw, th), _ = cv2.getTextSize(captions[1], font, font_scale, thickness)
+                    tx = target_w - tw - 10
+                    ty = target_h - 20
+                    cv2.rectangle(combined, (tx - 5, ty - th - 5), (tx + tw + 5, ty + 5), (0, 0, 0), -1)
+                    cv2.putText(combined, captions[1], (tx, ty), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+            return combined
+
+        elif self.layout_select.value == 'horizontal':
             # Match heights
             max_h = max(f.shape[0] for f in frame_list)
             resized = []
@@ -768,6 +831,7 @@ class SideBySideConverter:
             widgets.HTML('<h3>2. Output settings</h3>'),
             self.frame_range,
             self.layout_select,
+            widgets.HBox([self.split_position, self.split_line]),
             widgets.HBox([self.caption_position, self.caption_size]),
             self.quality,
             self.frame_skip,
