@@ -424,37 +424,65 @@ class SideBySideConverter:
         frame = frame[y1:y2, x1:x2]
         return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
+    def _get_font(self, size):
+        """Get a font with the specified size, trying multiple sources."""
+        from PIL import ImageFont
+
+        # Try common font paths
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+        ]
+
+        for path in font_paths:
+            try:
+                return ImageFont.truetype(path, size)
+            except:
+                continue
+
+        # Pillow 10+ has scalable default font
+        try:
+            return ImageFont.load_default(size=size)
+        except TypeError:
+            # Older Pillow - use default and scale manually
+            return ImageFont.load_default()
+
     def _add_caption(self, frame, caption):
         """Add caption to a single frame."""
         if not caption or self.caption_position.value == 'none':
             return frame
 
+        from PIL import ImageDraw
+
         img = Image.fromarray(frame)
         font_size = self.caption_size.value
+        font = self._get_font(font_size)
+
+        # Measure text
+        dummy_draw = ImageDraw.Draw(img)
+        bbox = dummy_draw.textbbox((0, 0), caption, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+
         padding = 10
-        text_height = font_size + padding * 2
+        bar_height = text_h + padding * 2
 
         # Create new image with space for caption
         if self.caption_position.value == 'top':
-            new_img = Image.new('RGB', (img.width, img.height + text_height), (0, 0, 0))
-            new_img.paste(img, (0, text_height))
+            new_img = Image.new('RGB', (img.width, img.height + bar_height), (0, 0, 0))
+            new_img.paste(img, (0, bar_height))
             text_y = padding
         else:  # bottom
-            new_img = Image.new('RGB', (img.width, img.height + text_height), (0, 0, 0))
+            new_img = Image.new('RGB', (img.width, img.height + bar_height), (0, 0, 0))
             new_img.paste(img, (0, 0))
             text_y = img.height + padding
 
-        # Draw caption
-        from PIL import ImageDraw, ImageFont
+        # Draw caption centered
         draw = ImageDraw.Draw(new_img)
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", font_size)
-        except:
-            font = ImageFont.load_default()
-
-        # Center text
-        bbox = draw.textbbox((0, 0), caption, font=font)
-        text_w = bbox[2] - bbox[0]
         text_x = (new_img.width - text_w) // 2
         draw.text((text_x, text_y), caption, fill=(255, 255, 255), font=font)
 
