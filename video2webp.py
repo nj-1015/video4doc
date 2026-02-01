@@ -373,8 +373,8 @@ class SideBySideConverter:
         )
 
         self.caption_size = widgets.IntSlider(
-            value=24, min=12, max=72,
-            step=2, description='Caption Size:',
+            value=48, min=16, max=150,
+            step=4, description='Caption Size:',
             style=style, layout=layout
         )
 
@@ -424,69 +424,40 @@ class SideBySideConverter:
         frame = frame[y1:y2, x1:x2]
         return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    def _get_font(self, size):
-        """Get a font with the specified size, trying multiple sources."""
-        from PIL import ImageFont
-
-        # Try common font paths
-        font_paths = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-            "C:/Windows/Fonts/arial.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
-        ]
-
-        for path in font_paths:
-            try:
-                return ImageFont.truetype(path, size)
-            except:
-                continue
-
-        # Pillow 10+ has scalable default font
-        try:
-            return ImageFont.load_default(size=size)
-        except TypeError:
-            # Older Pillow - use default and scale manually
-            return ImageFont.load_default()
-
     def _add_caption(self, frame, caption):
-        """Add caption to a single frame."""
+        """Add caption to a single frame using OpenCV."""
         if not caption or self.caption_position.value == 'none':
             return frame
 
-        from PIL import ImageDraw
-
-        img = Image.fromarray(frame)
         font_size = self.caption_size.value
-        font = self._get_font(font_size)
+        # OpenCV font scale (roughly: font_size / 30 gives good scaling)
+        font_scale = font_size / 25.0
+        thickness = max(2, int(font_size / 20))
 
-        # Measure text
-        dummy_draw = ImageDraw.Draw(img)
-        bbox = dummy_draw.textbbox((0, 0), caption, font=font)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
+        # Measure text size
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        (text_w, text_h), baseline = cv2.getTextSize(caption, font, font_scale, thickness)
 
-        padding = 10
-        bar_height = text_h + padding * 2
+        padding = 20
+        bar_height = text_h + baseline + padding * 2
+        frame_h, frame_w = frame.shape[:2]
 
-        # Create new image with space for caption
+        # Create new frame with caption bar
         if self.caption_position.value == 'top':
-            new_img = Image.new('RGB', (img.width, img.height + bar_height), (0, 0, 0))
-            new_img.paste(img, (0, bar_height))
-            text_y = padding
+            new_frame = np.zeros((frame_h + bar_height, frame_w, 3), dtype=np.uint8)
+            new_frame[bar_height:, :] = frame
+            text_y = padding + text_h
         else:  # bottom
-            new_img = Image.new('RGB', (img.width, img.height + bar_height), (0, 0, 0))
-            new_img.paste(img, (0, 0))
-            text_y = img.height + padding
+            new_frame = np.zeros((frame_h + bar_height, frame_w, 3), dtype=np.uint8)
+            new_frame[:frame_h, :] = frame
+            text_y = frame_h + padding + text_h
 
         # Draw caption centered
-        draw = ImageDraw.Draw(new_img)
-        text_x = (new_img.width - text_w) // 2
-        draw.text((text_x, text_y), caption, fill=(255, 255, 255), font=font)
+        text_x = (frame_w - text_w) // 2
+        cv2.putText(new_frame, caption, (text_x, text_y), font, font_scale,
+                    (255, 255, 255), thickness, cv2.LINE_AA)
 
-        return np.array(new_img)
+        return new_frame
 
     def _combine_frames(self, frame_list, captions=None):
         """Combine multiple frames into one."""
