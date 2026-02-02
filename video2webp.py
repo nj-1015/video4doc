@@ -779,37 +779,69 @@ class SideBySideConverter:
                 print(f"Thumbnail saved: {thumb_path}")
 
     def _create_interactive_html(self, _=None):
-        """Create interactive HTML comparison slider (for 2 videos in split mode)."""
+        """Create interactive HTML comparison slider with animated WebP (for 2 videos)."""
         with self.status_output:
             clear_output(wait=True)
             if len(self.videos) != 2:
                 print("Interactive HTML requires exactly 2 videos")
                 return
 
-            frame_num = self.frame_range.value[0]
-            frames = []
-            for sel in self.selectors:
-                roi = sel.get_roi()
-                f = self._extract_roi_frame(sel.video, roi, frame_num)
-                if f is not None:
-                    frames.append(f)
+            print("Generating animated comparison...")
 
-            if len(frames) != 2:
+            start_frame, end_frame = self.frame_range.value
+            rois = [sel.get_roi() for sel in self.selectors]
+
+            # Collect frames for both videos
+            frames_1, frames_2 = [], []
+
+            for i in range(start_frame, end_frame + 1):
+                if (i - start_frame) % self.frame_skip.value != 0:
+                    continue
+
+                f1 = self._extract_roi_frame(self.selectors[0].video, rois[0], i)
+                f2 = self._extract_roi_frame(self.selectors[1].video, rois[1], i)
+
+                if f1 is not None and f2 is not None:
+                    frames_1.append(f1)
+                    frames_2.append(f2)
+
+                if len(frames_1) % 20 == 0:
+                    print(f"Processed {len(frames_1)} frames...")
+
+            if not frames_1 or not frames_2:
                 print("Could not extract frames")
                 return
 
-            # Resize to same dimensions
-            h = max(frames[0].shape[0], frames[1].shape[0])
-            w = max(frames[0].shape[1], frames[1].shape[1])
-            f1 = cv2.resize(frames[0], (w, h))
-            f2 = cv2.resize(frames[1], (w, h))
+            # Resize all frames to same dimensions
+            h = max(max(f.shape[0] for f in frames_1), max(f.shape[0] for f in frames_2))
+            w = max(max(f.shape[1] for f in frames_1), max(f.shape[1] for f in frames_2))
 
-            # Convert to base64
-            img1 = Image.fromarray(f1)
-            img2 = Image.fromarray(f2)
+            frames_1 = [cv2.resize(f, (w, h)) for f in frames_1]
+            frames_2 = [cv2.resize(f, (w, h)) for f in frames_2]
+
+            # Apply adjustments
+            frames_1 = [self._apply_adjustments(f) for f in frames_1]
+            frames_2 = [self._apply_adjustments(f) for f in frames_2]
+
+            # Ping-pong
+            if self.pingpong.value and len(frames_1) > 2:
+                frames_1 = frames_1 + frames_1[-2:0:-1]
+                frames_2 = frames_2 + frames_2[-2:0:-1]
+
+            # Calculate duration
+            effective_fps = (self.videos[0].fps / self.frame_skip.value) * self.speed.value
+            duration_ms = int(1000 / effective_fps)
+
+            # Convert to PIL and save as WebP
+            pil_1 = [Image.fromarray(f) for f in frames_1]
+            pil_2 = [Image.fromarray(f) for f in frames_2]
+
             buf1, buf2 = io.BytesIO(), io.BytesIO()
-            img1.save(buf1, 'PNG')
-            img2.save(buf2, 'PNG')
+            pil_1[0].save(buf1, 'WEBP', save_all=True, append_images=pil_1[1:],
+                         duration=duration_ms, loop=0, quality=self.quality.value)
+            pil_2[0].save(buf2, 'WEBP', save_all=True, append_images=pil_2[1:],
+                         duration=duration_ms, loop=0, quality=self.quality.value)
+
             b64_1 = base64.b64encode(buf1.getvalue()).decode()
             b64_2 = base64.b64encode(buf2.getvalue()).decode()
 
@@ -818,31 +850,83 @@ class SideBySideConverter:
             cap2 = captions[1] if len(captions) > 1 and captions[1] else 'After'
 
             html_content = f'''<!DOCTYPE html>
-<html><head><style>
-.comparison-container {{width:{w}px;position:relative;overflow:hidden;}}
-.comparison-container img {{display:block;width:100%;}}
-.img-overlay {{position:absolute;top:0;left:0;width:50%;overflow:hidden;}}
-.slider {{position:absolute;top:0;bottom:0;width:4px;background:#fff;left:50%;cursor:ew-resize;}}
-.slider:after {{content:"";position:absolute;top:50%;left:-18px;width:40px;height:40px;border-radius:50%;background:#fff;transform:translateY(-50%);box-shadow:0 2px 6px rgba(0,0,0,0.3);}}
-.label {{position:absolute;bottom:10px;padding:5px 10px;background:rgba(0,0,0,0.7);color:#fff;font-family:sans-serif;}}
-.label-left {{left:10px;}}
-.label-right {{right:10px;}}
-</style></head><body>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comparison: {cap1} vs {cap2}</title>
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #1a1a1a; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }}
+.comparison-container {{ position: relative; width: {w}px; max-width: 100%; overflow: hidden; cursor: ew-resize; }}
+.comparison-container img {{ display: block; width: {w}px; height: {h}px; pointer-events: none; }}
+.img-background {{ position: relative; }}
+.img-overlay {{ position: absolute; top: 0; left: 0; width: 50%; height: 100%; overflow: hidden; }}
+.img-overlay img {{ position: absolute; top: 0; left: 0; }}
+.slider {{ position: absolute; top: 0; left: 50%; width: 4px; height: 100%; background: #fff; transform: translateX(-50%); pointer-events: none; box-shadow: 0 0 10px rgba(0,0,0,0.5); }}
+.slider::before, .slider::after {{ content: ""; position: absolute; left: 50%; width: 0; height: 0; border: 8px solid transparent; transform: translateX(-50%); }}
+.slider::before {{ top: 50%; margin-top: -20px; border-bottom: 12px solid #fff; border-top: none; }}
+.slider::after {{ top: 50%; margin-top: 8px; border-top: 12px solid #fff; border-bottom: none; }}
+.label {{ position: absolute; bottom: 15px; padding: 8px 16px; background: rgba(0,0,0,0.8); color: #fff; font-size: 14px; font-weight: 500; border-radius: 4px; }}
+.label-left {{ left: 15px; }}
+.label-right {{ right: 15px; }}
+.instructions {{ position: absolute; top: 15px; left: 50%; transform: translateX(-50%); padding: 8px 16px; background: rgba(0,0,0,0.8); color: #fff; font-size: 12px; border-radius: 4px; opacity: 0.8; }}
+</style>
+</head>
+<body>
 <div class="comparison-container" id="container">
-<img src="data:image/png;base64,{b64_2}" alt="After">
-<div class="img-overlay" id="overlay"><img src="data:image/png;base64,{b64_1}" alt="Before"></div>
-<div class="slider" id="slider"></div>
-<span class="label label-left">{cap1}</span>
-<span class="label label-right">{cap2}</span>
+  <div class="img-background">
+    <img src="data:image/webp;base64,{b64_2}" alt="{cap2}">
+  </div>
+  <div class="img-overlay" id="overlay">
+    <img src="data:image/webp;base64,{b64_1}" alt="{cap1}">
+  </div>
+  <div class="slider" id="slider"></div>
+  <span class="label label-left">{cap1}</span>
+  <span class="label label-right">{cap2}</span>
+  <span class="instructions">Drag to compare</span>
 </div>
 <script>
-const container=document.getElementById("container"),overlay=document.getElementById("overlay"),slider=document.getElementById("slider");
-let isDragging=false;
-slider.addEventListener("mousedown",()=>isDragging=true);
-document.addEventListener("mouseup",()=>isDragging=false);
-container.addEventListener("mousemove",e=>{{if(!isDragging)return;const rect=container.getBoundingClientRect();let x=e.clientX-rect.left;x=Math.max(0,Math.min(x,rect.width));const pct=(x/rect.width)*100;overlay.style.width=pct+"%";slider.style.left=pct+"%";}});
-container.addEventListener("click",e=>{{const rect=container.getBoundingClientRect();let x=e.clientX-rect.left;const pct=(x/rect.width)*100;overlay.style.width=pct+"%";slider.style.left=pct+"%";}});
-</script></body></html>'''
+const container = document.getElementById("container");
+const overlay = document.getElementById("overlay");
+const slider = document.getElementById("slider");
+let isDragging = false;
+
+function updatePosition(x) {{
+  const rect = container.getBoundingClientRect();
+  let pos = (x - rect.left) / rect.width;
+  pos = Math.max(0, Math.min(1, pos));
+  const pct = pos * 100;
+  overlay.style.width = pct + "%";
+  slider.style.left = pct + "%";
+}}
+
+container.addEventListener("mousedown", (e) => {{
+  isDragging = true;
+  updatePosition(e.clientX);
+}});
+
+document.addEventListener("mouseup", () => isDragging = false);
+
+document.addEventListener("mousemove", (e) => {{
+  if (isDragging) updatePosition(e.clientX);
+}});
+
+// Touch support
+container.addEventListener("touchstart", (e) => {{
+  isDragging = true;
+  updatePosition(e.touches[0].clientX);
+}});
+
+document.addEventListener("touchend", () => isDragging = false);
+
+document.addEventListener("touchmove", (e) => {{
+  if (isDragging) {{
+    e.preventDefault();
+    updatePosition(e.touches[0].clientX);
+  }}
+}});
+</script>
+</body></html>'''
 
             html_name = f"{self.output_name.value}_comparison.html"
             if self.save_to_gdrive.value:
