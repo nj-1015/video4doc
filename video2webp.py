@@ -595,6 +595,38 @@ class VideoROISelector:
         except (ValueError, IndexError):
             pass
 
+    def _handle_roi_from_js(self, coord_str):
+        """Handle ROI coordinates from JavaScript via Colab callback."""
+        try:
+            coords = coord_str.split(',')
+            if len(coords) == 4:
+                x1, y1, x2, y2 = [int(float(c)) for c in coords]
+                # Convert from preview coordinates to reference coordinates
+                scale = self.preview_scale
+                if scale > 0:
+                    x1 = int(x1 / scale)
+                    y1 = int(y1 / scale)
+                    x2 = int(x2 / scale)
+                    y2 = int(y2 / scale)
+                # Clamp to reference dimensions
+                x1 = max(0, min(x1, self.ref_width))
+                x2 = max(0, min(x2, self.ref_width))
+                y1 = max(0, min(y1, self.ref_height))
+                y2 = max(0, min(y2, self.ref_height))
+                # Ensure x1 < x2 and y1 < y2
+                if x1 > x2:
+                    x1, x2 = x2, x1
+                if y1 > y2:
+                    y1, y2 = y2, y1
+                # Update sliders
+                self.roi_x.value = (x1, x2)
+                self.roi_y.value = (y1, y2)
+                # Notify callback for ROI sync with other videos
+                if self.on_roi_change:
+                    self.on_roi_change(self.index, (x1, x2), (y1, y2))
+        except (ValueError, IndexError):
+            pass
+
     def _get_frame_for_preview(self):
         """Get frame for preview scaled to reference size."""
         cap = cv2.VideoCapture(self.video.filename)
@@ -645,7 +677,14 @@ class VideoROISelector:
 
                 # Unique ID for this selector
                 uid = f"roi_canvas_{self.index}"
-                coord_widget_id = self._roi_coords.model_id
+
+                # Register Colab callback for receiving ROI coordinates from JavaScript
+                callback_name = f"roi_callback_{self.index}"
+                try:
+                    from google.colab import output
+                    output.register_callback(callback_name, self._handle_roi_from_js)
+                except ImportError:
+                    pass  # Not in Colab
 
                 html_content = f'''
                 <div style="position:relative;display:inline-block;cursor:crosshair;" id="{uid}_container">
@@ -664,6 +703,13 @@ class VideoROISelector:
 
                     // Current ROI
                     var roiX1 = {px1}, roiY1 = {py1}, roiX2 = {px2}, roiY2 = {py2};
+
+                    function sendToPython(coordStr) {{
+                        // Use Colab's callback mechanism
+                        if (typeof google !== 'undefined' && google.colab) {{
+                            google.colab.kernel.invokeFunction('{callback_name}', [coordStr], {{}});
+                        }}
+                    }}
 
                     function drawROI() {{
                         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -729,15 +775,10 @@ class VideoROISelector:
                         var x2 = Math.max(startX, endX), y2 = Math.max(startY, endY);
                         if (Math.abs(x2 - x1) > 5 && Math.abs(y2 - y1) > 5) {{
                             roiX1 = x1; roiY1 = y1; roiX2 = x2; roiY2 = y2;
-                            // Send coordinates to Python widget
+                            // Send coordinates to Python via Colab callback
                             var coordStr = x1 + "," + y1 + "," + x2 + "," + y2;
-                            var widget = IPython.WidgetManager._managers[0].get_model("{coord_widget_id}");
-                            if (widget) {{
-                                widget.then(function(model) {{
-                                    model.set("value", coordStr);
-                                    model.save_changes();
-                                }});
-                            }}
+                            sendToPython(coordStr);
+                            info.textContent = "ROI updated: " + Math.round((x2-x1)/{scale}) + " x " + Math.round((y2-y1)/{scale}) + " px";
                         }}
                         drawROI();
                     }}
