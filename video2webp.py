@@ -865,6 +865,8 @@ class SideBySideConverter:
                 if i != source_idx:
                     sel.roi_x.value = roi_x
                     sel.roi_y.value = roi_y
+                    # Explicitly refresh the preview to show updated ROI
+                    sel._update_preview()
         finally:
             self._syncing = False
 
