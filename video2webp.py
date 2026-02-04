@@ -251,6 +251,16 @@ class WebPConverter:
             style=style, layout=layout
         )  # 0 means no limit
 
+        self.resize_method = widgets.Dropdown(
+            options=[('Bilinear (smooth)', cv2.INTER_LINEAR),
+                     ('Nearest Neighbor (sharp pixels)', cv2.INTER_NEAREST),
+                     ('Bicubic (smoother)', cv2.INTER_CUBIC),
+                     ('Area (best for downscale)', cv2.INTER_AREA)],
+            value=cv2.INTER_LINEAR,
+            description='Resize:',
+            style=style, layout=layout
+        )
+
         self.output_format = widgets.RadioButtons(
             options=[('WebP', 'webp'), ('GIF', 'gif')],
             value='webp', description='Format:',
@@ -308,7 +318,7 @@ class WebPConverter:
             h, w = frame.shape[:2]
             if w > self.max_size.value or h > self.max_size.value:
                 ratio = self.max_size.value / max(w, h)
-                frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)))
+                frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)), interpolation=self.resize_method.value)
 
         # Border
         if self.border_size.value > 0:
@@ -338,7 +348,7 @@ class WebPConverter:
         if self.scale.value != 1.0:
             new_w = int(frame.shape[1] * self.scale.value)
             new_h = int(frame.shape[0] * self.scale.value)
-            frame = cv2.resize(frame, (new_w, new_h))
+            frame = cv2.resize(frame, (new_w, new_h), interpolation=self.resize_method.value)
 
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame = self._apply_adjustments(frame)
@@ -448,6 +458,7 @@ class WebPConverter:
             widgets.HTML('<h4>Output Settings</h4>'),
             widgets.HBox([self.output_format, self.quality]),
             widgets.HBox([self.scale, self.max_size]),
+            self.resize_method,
             self.frame_skip,
             widgets.HBox([self.speed, self.loop, self.pingpong]),
             self.save_to_gdrive,
@@ -482,6 +493,7 @@ class VideoROISelector:
     def __init__(self, video_info, index=0):
         self.video = video_info
         self.index = index
+        self.preview_scale = 1.0  # Track scale for coordinate conversion
         self._create_widgets()
 
     def _create_widgets(self):
@@ -514,6 +526,10 @@ class VideoROISelector:
             style=style, layout=layout
         )
 
+        # Hidden widget for receiving coordinates from JavaScript
+        self._roi_coords = widgets.Text(value='', layout=widgets.Layout(display='none'))
+        self._roi_coords.observe(self._on_roi_drag, names='value')
+
         self.preview_output = widgets.Output()
 
         # Link preview updates
@@ -521,22 +537,48 @@ class VideoROISelector:
         self.roi_y.observe(self._update_preview, names='value')
         self.preview_frame.observe(self._update_preview, names='value')
 
-    def _get_frame_with_roi(self):
-        """Get frame with ROI rectangle overlay."""
+    def _on_roi_drag(self, change):
+        """Handle ROI coordinates from JavaScript drag selection."""
+        if not change['new']:
+            return
+        try:
+            coords = change['new'].split(',')
+            if len(coords) == 4:
+                x1, y1, x2, y2 = [int(float(c)) for c in coords]
+                # Convert from preview coordinates to original video coordinates
+                scale = self.preview_scale
+                if scale > 0:
+                    x1 = int(x1 / scale)
+                    y1 = int(y1 / scale)
+                    x2 = int(x2 / scale)
+                    y2 = int(y2 / scale)
+                # Clamp to video dimensions
+                x1 = max(0, min(x1, self.video.width))
+                x2 = max(0, min(x2, self.video.width))
+                y1 = max(0, min(y1, self.video.height))
+                y2 = max(0, min(y2, self.video.height))
+                # Ensure x1 < x2 and y1 < y2
+                if x1 > x2:
+                    x1, x2 = x2, x1
+                if y1 > y2:
+                    y1, y2 = y2, y1
+                # Update sliders (this will trigger preview update)
+                self.roi_x.value = (x1, x2)
+                self.roi_y.value = (y1, y2)
+        except (ValueError, IndexError):
+            pass
+
+    def _get_frame_for_preview(self):
+        """Get frame for preview (without ROI overlay)."""
         cap = cv2.VideoCapture(self.video.filename)
         cap.set(cv2.CAP_PROP_POS_FRAMES, self.preview_frame.value)
         ret, frame = cap.read()
         cap.release()
 
         if not ret:
-            return None
+            return None, 1.0
 
-        x1, x2 = self.roi_x.value
-        y1, y2 = self.roi_y.value
-
-        # Draw ROI rectangle
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        cv2.rectangle(frame_rgb, (x1, y1), (x2, y2), (0, 255, 0), 3)
 
         # Scale down for preview if too large
         max_preview = 400
@@ -544,22 +586,142 @@ class VideoROISelector:
         if w > max_preview or h > max_preview:
             scale = max_preview / max(w, h)
             frame_rgb = cv2.resize(frame_rgb, (int(w * scale), int(h * scale)))
+        else:
+            scale = 1.0
 
-        return frame_rgb
+        return frame_rgb, scale
 
     def _update_preview(self, _=None):
         with self.preview_output:
             clear_output(wait=True)
-            frame = self._get_frame_with_roi()
+            frame, scale = self._get_frame_for_preview()
             if frame is not None:
+                self.preview_scale = scale
+                h, w = frame.shape[:2]
+
+                # Convert current ROI to preview coordinates
+                x1, x2 = self.roi_x.value
+                y1, y2 = self.roi_y.value
+                px1, py1 = int(x1 * scale), int(y1 * scale)
+                px2, py2 = int(x2 * scale), int(y2 * scale)
+
                 img = Image.fromarray(frame)
                 buffer = io.BytesIO()
                 img.save(buffer, format='PNG')
                 img_str = base64.b64encode(buffer.getvalue()).decode()
-                display(HTML(f'<img src="data:image/png;base64,{img_str}"/>'))
-                x1, x2 = self.roi_x.value
-                y1, y2 = self.roi_y.value
-                print(f"ROI: {x2-x1} x {y2-y1} px")
+
+                # Unique ID for this selector
+                uid = f"roi_canvas_{self.index}"
+                coord_widget_id = self._roi_coords.model_id
+
+                html_content = f'''
+                <div style="position:relative;display:inline-block;cursor:crosshair;" id="{uid}_container">
+                    <img id="{uid}_img" src="data:image/png;base64,{img_str}" style="display:block;"/>
+                    <canvas id="{uid}" width="{w}" height="{h}" style="position:absolute;top:0;left:0;"></canvas>
+                </div>
+                <div id="{uid}_info" style="font-family:monospace;margin-top:4px;">ROI: {x2-x1} x {y2-y1} px (drag to select)</div>
+                <script>
+                (function() {{
+                    var canvas = document.getElementById("{uid}");
+                    var ctx = canvas.getContext("2d");
+                    var container = document.getElementById("{uid}_container");
+                    var info = document.getElementById("{uid}_info");
+                    var drawing = false;
+                    var startX, startY, endX, endY;
+
+                    // Current ROI
+                    var roiX1 = {px1}, roiY1 = {py1}, roiX2 = {px2}, roiY2 = {py2};
+
+                    function drawROI() {{
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        ctx.strokeStyle = "#00ff00";
+                        ctx.lineWidth = 2;
+                        ctx.setLineDash([]);
+                        ctx.strokeRect(roiX1, roiY1, roiX2 - roiX1, roiY2 - roiY1);
+                    }}
+
+                    function drawSelection(x1, y1, x2, y2) {{
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        // Draw existing ROI faded
+                        ctx.strokeStyle = "rgba(0,255,0,0.3)";
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(roiX1, roiY1, roiX2 - roiX1, roiY2 - roiY1);
+                        // Draw new selection
+                        ctx.strokeStyle = "#ff0000";
+                        ctx.lineWidth = 2;
+                        ctx.setLineDash([5, 5]);
+                        ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                        ctx.setLineDash([]);
+                    }}
+
+                    function getPos(e) {{
+                        var rect = canvas.getBoundingClientRect();
+                        var x, y;
+                        if (e.touches) {{
+                            x = e.touches[0].clientX - rect.left;
+                            y = e.touches[0].clientY - rect.top;
+                        }} else {{
+                            x = e.clientX - rect.left;
+                            y = e.clientY - rect.top;
+                        }}
+                        return {{x: Math.max(0, Math.min(x, canvas.width)), y: Math.max(0, Math.min(y, canvas.height))}};
+                    }}
+
+                    function onStart(e) {{
+                        e.preventDefault();
+                        drawing = true;
+                        var pos = getPos(e);
+                        startX = pos.x;
+                        startY = pos.y;
+                    }}
+
+                    function onMove(e) {{
+                        if (!drawing) return;
+                        e.preventDefault();
+                        var pos = getPos(e);
+                        endX = pos.x;
+                        endY = pos.y;
+                        var x1 = Math.min(startX, endX), y1 = Math.min(startY, endY);
+                        var x2 = Math.max(startX, endX), y2 = Math.max(startY, endY);
+                        drawSelection(x1, y1, x2, y2);
+                        var w = Math.abs(x2 - x1) / {scale};
+                        var h = Math.abs(y2 - y1) / {scale};
+                        info.textContent = "Selecting: " + Math.round(w) + " x " + Math.round(h) + " px";
+                    }}
+
+                    function onEnd(e) {{
+                        if (!drawing) return;
+                        drawing = false;
+                        var x1 = Math.min(startX, endX), y1 = Math.min(startY, endY);
+                        var x2 = Math.max(startX, endX), y2 = Math.max(startY, endY);
+                        if (Math.abs(x2 - x1) > 5 && Math.abs(y2 - y1) > 5) {{
+                            roiX1 = x1; roiY1 = y1; roiX2 = x2; roiY2 = y2;
+                            // Send coordinates to Python widget
+                            var coordStr = x1 + "," + y1 + "," + x2 + "," + y2;
+                            var widget = IPython.WidgetManager._managers[0].get_model("{coord_widget_id}");
+                            if (widget) {{
+                                widget.then(function(model) {{
+                                    model.set("value", coordStr);
+                                    model.save_changes();
+                                }});
+                            }}
+                        }}
+                        drawROI();
+                    }}
+
+                    canvas.addEventListener("mousedown", onStart);
+                    canvas.addEventListener("mousemove", onMove);
+                    canvas.addEventListener("mouseup", onEnd);
+                    canvas.addEventListener("mouseleave", onEnd);
+                    canvas.addEventListener("touchstart", onStart);
+                    canvas.addEventListener("touchmove", onMove);
+                    canvas.addEventListener("touchend", onEnd);
+
+                    drawROI();
+                }})();
+                </script>
+                '''
+                display(HTML(html_content))
 
     def get_roi(self):
         """Return current ROI as (x1, y1, x2, y2)."""
@@ -575,6 +737,7 @@ class VideoROISelector:
             self.preview_frame,
             self.roi_x,
             self.roi_y,
+            self._roi_coords,  # Hidden widget for JS communication
             self.preview_output
         ])
 
@@ -655,6 +818,16 @@ class SideBySideConverter:
         self.max_size = widgets.IntSlider(
             value=0, min=0, max=1920,
             step=100, description='Max Size:',
+            style=style, layout=layout
+        )
+
+        self.resize_method = widgets.Dropdown(
+            options=[('Bilinear (smooth)', cv2.INTER_LINEAR),
+                     ('Nearest Neighbor (sharp pixels)', cv2.INTER_NEAREST),
+                     ('Bicubic (smoother)', cv2.INTER_CUBIC),
+                     ('Area (best for downscale)', cv2.INTER_AREA)],
+            value=cv2.INTER_LINEAR,
+            description='Resize:',
             style=style, layout=layout
         )
 
@@ -743,7 +916,7 @@ class SideBySideConverter:
             h, w = frame.shape[:2]
             if w > self.max_size.value or h > self.max_size.value:
                 ratio = self.max_size.value / max(w, h)
-                frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)))
+                frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)), interpolation=self.resize_method.value)
 
         if self.border_size.value > 0:
             color_hex = self.border_color.value.lstrip('#')
@@ -816,8 +989,9 @@ class SideBySideConverter:
             h = max(max(f.shape[0] for f in frames_1), max(f.shape[0] for f in frames_2))
             w = max(max(f.shape[1] for f in frames_1), max(f.shape[1] for f in frames_2))
 
-            frames_1 = [cv2.resize(f, (w, h)) for f in frames_1]
-            frames_2 = [cv2.resize(f, (w, h)) for f in frames_2]
+            interp = self.resize_method.value
+            frames_1 = [cv2.resize(f, (w, h), interpolation=interp) for f in frames_1]
+            frames_2 = [cv2.resize(f, (w, h), interpolation=interp) for f in frames_2]
 
             # Apply adjustments
             frames_1 = [self._apply_adjustments(f) for f in frames_1]
@@ -1029,8 +1203,8 @@ document.addEventListener("touchmove", (e) => {{
             target_h = max(f1.shape[0], f2.shape[0])
             target_w = max(f1.shape[1], f2.shape[1])
 
-            f1 = cv2.resize(f1, (target_w, target_h))
-            f2 = cv2.resize(f2, (target_w, target_h))
+            f1 = cv2.resize(f1, (target_w, target_h), interpolation=self.resize_method.value)
+            f2 = cv2.resize(f2, (target_w, target_h), interpolation=self.resize_method.value)
 
             # Calculate split position
             split_x = int(target_w * self.split_position.value / 100)
@@ -1078,7 +1252,7 @@ document.addEventListener("touchmove", (e) => {{
                 if f.shape[0] != max_h:
                     scale = max_h / f.shape[0]
                     new_w = int(f.shape[1] * scale)
-                    f = cv2.resize(f, (new_w, max_h))
+                    f = cv2.resize(f, (new_w, max_h), interpolation=self.resize_method.value)
                 resized.append(f)
             return np.hstack(resized)
         else:
@@ -1089,7 +1263,7 @@ document.addEventListener("touchmove", (e) => {{
                 if f.shape[1] != max_w:
                     scale = max_w / f.shape[1]
                     new_h = int(f.shape[0] * scale)
-                    f = cv2.resize(f, (max_w, new_h))
+                    f = cv2.resize(f, (max_w, new_h), interpolation=self.resize_method.value)
                 resized.append(f)
             return np.vstack(resized)
 
@@ -1250,6 +1424,7 @@ document.addEventListener("touchmove", (e) => {{
             widgets.HTML('<h3>3. Adjustments</h3>'),
             widgets.HBox([self.brightness, self.contrast]),
             widgets.HBox([self.border_size, self.border_color]),
+            self.resize_method,
             widgets.HTML('<h3>4. Output</h3>'),
             widgets.HBox([self.output_format, self.quality]),
             widgets.HBox([self.max_size, self.speed]),
