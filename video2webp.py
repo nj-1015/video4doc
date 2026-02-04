@@ -490,26 +490,48 @@ class WebPConverter:
 class VideoROISelector:
     """Interactive ROI selector for a single video."""
 
-    def __init__(self, video_info, index=0):
+    def __init__(self, video_info, index=0, reference_size=None):
+        """
+        Args:
+            video_info: VideoInfo object
+            index: Video index for display
+            reference_size: Optional (width, height) tuple for normalized coordinates.
+                           If provided, ROI selection works in reference coordinates
+                           and is scaled to actual video coordinates when extracting frames.
+        """
         self.video = video_info
         self.index = index
         self.preview_scale = 1.0  # Track scale for coordinate conversion
+
+        # Reference size for normalized ROI coordinates
+        if reference_size:
+            self.ref_width, self.ref_height = reference_size
+            self.scale_x = self.video.width / self.ref_width
+            self.scale_y = self.video.height / self.ref_height
+            self.is_scaled = (self.video.width != self.ref_width or
+                             self.video.height != self.ref_height)
+        else:
+            self.ref_width, self.ref_height = self.video.width, self.video.height
+            self.scale_x = self.scale_y = 1.0
+            self.is_scaled = False
+
         self._create_widgets()
 
     def _create_widgets(self):
         style = {'description_width': '80px'}
         layout = widgets.Layout(width='400px')
 
+        # Use reference dimensions for sliders (enables sync across different resolutions)
         self.roi_x = widgets.IntRangeSlider(
-            value=[0, self.video.width],
-            min=0, max=self.video.width,
+            value=[0, self.ref_width],
+            min=0, max=self.ref_width,
             step=1, description='ROI X:',
             style=style, layout=layout, continuous_update=False
         )
 
         self.roi_y = widgets.IntRangeSlider(
-            value=[0, self.video.height],
-            min=0, max=self.video.height,
+            value=[0, self.ref_height],
+            min=0, max=self.ref_height,
             step=1, description='ROI Y:',
             style=style, layout=layout, continuous_update=False
         )
@@ -545,18 +567,18 @@ class VideoROISelector:
             coords = change['new'].split(',')
             if len(coords) == 4:
                 x1, y1, x2, y2 = [int(float(c)) for c in coords]
-                # Convert from preview coordinates to original video coordinates
+                # Convert from preview coordinates to reference coordinates
                 scale = self.preview_scale
                 if scale > 0:
                     x1 = int(x1 / scale)
                     y1 = int(y1 / scale)
                     x2 = int(x2 / scale)
                     y2 = int(y2 / scale)
-                # Clamp to video dimensions
-                x1 = max(0, min(x1, self.video.width))
-                x2 = max(0, min(x2, self.video.width))
-                y1 = max(0, min(y1, self.video.height))
-                y2 = max(0, min(y2, self.video.height))
+                # Clamp to reference dimensions (sliders use reference coords)
+                x1 = max(0, min(x1, self.ref_width))
+                x2 = max(0, min(x2, self.ref_width))
+                y1 = max(0, min(y1, self.ref_height))
+                y2 = max(0, min(y2, self.ref_height))
                 # Ensure x1 < x2 and y1 < y2
                 if x1 > x2:
                     x1, x2 = x2, x1
@@ -569,7 +591,7 @@ class VideoROISelector:
             pass
 
     def _get_frame_for_preview(self):
-        """Get frame for preview (without ROI overlay)."""
+        """Get frame for preview scaled to reference size."""
         cap = cv2.VideoCapture(self.video.filename)
         cap.set(cv2.CAP_PROP_POS_FRAMES, self.preview_frame.value)
         ret, frame = cap.read()
@@ -580,9 +602,15 @@ class VideoROISelector:
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Scale down for preview if too large
-        max_preview = 400
+        # First, scale to reference size if needed (for resolution alignment)
         h, w = frame_rgb.shape[:2]
+        if w != self.ref_width or h != self.ref_height:
+            frame_rgb = cv2.resize(frame_rgb, (self.ref_width, self.ref_height),
+                                   interpolation=cv2.INTER_NEAREST)
+
+        # Then scale down for preview display if too large
+        max_preview = 400
+        h, w = frame_rgb.shape[:2]  # Now in reference dimensions
         if w > max_preview or h > max_preview:
             scale = max_preview / max(w, h)
             frame_rgb = cv2.resize(frame_rgb, (int(w * scale), int(h * scale)))
@@ -724,15 +752,30 @@ class VideoROISelector:
                 display(HTML(html_content))
 
     def get_roi(self):
-        """Return current ROI as (x1, y1, x2, y2)."""
-        return (self.roi_x.value[0], self.roi_y.value[0],
-                self.roi_x.value[1], self.roi_y.value[1])
+        """Return current ROI as (x1, y1, x2, y2) in actual video coordinates."""
+        # Convert from reference coordinates to actual video coordinates
+        x1 = int(self.roi_x.value[0] * self.scale_x)
+        y1 = int(self.roi_y.value[0] * self.scale_y)
+        x2 = int(self.roi_x.value[1] * self.scale_x)
+        y2 = int(self.roi_y.value[1] * self.scale_y)
+        # Clamp to actual video dimensions
+        x1 = max(0, min(x1, self.video.width))
+        x2 = max(0, min(x2, self.video.width))
+        y1 = max(0, min(y1, self.video.height))
+        y2 = max(0, min(y2, self.video.height))
+        return (x1, y1, x2, y2)
 
     def get_widget(self):
         """Return widget for display."""
+        # Show scale info if video was rescaled for alignment
+        if self.is_scaled:
+            scale_info = f'<br><span style="color:#ff9800;">⚠ Scaled to {self.ref_width}x{self.ref_height} for ROI sync</span>'
+        else:
+            scale_info = ''
+
         return widgets.VBox([
             widgets.HTML(f'<b>Video {self.index + 1}: {os.path.basename(self.video.filename)}</b>'),
-            widgets.HTML(f'<small>{self.video.width}x{self.video.height}, {self.video.total_frames} frames</small>'),
+            widgets.HTML(f'<small>{self.video.width}x{self.video.height}, {self.video.total_frames} frames{scale_info}</small>'),
             self.caption,
             self.preview_frame,
             self.roi_x,
@@ -751,7 +794,15 @@ class SideBySideConverter:
             video_list: List of VideoInfo objects
         """
         self.videos = video_list
-        self.selectors = [VideoROISelector(v, i) for i, v in enumerate(video_list)]
+
+        # Calculate reference size (max dimensions) for ROI alignment
+        ref_width = max(v.width for v in video_list)
+        ref_height = max(v.height for v in video_list)
+        self.reference_size = (ref_width, ref_height)
+
+        # Create selectors with reference size for coordinate normalization
+        self.selectors = [VideoROISelector(v, i, reference_size=self.reference_size)
+                         for i, v in enumerate(video_list)]
         self._syncing = False  # Flag to prevent recursive sync
         self._create_widgets()
         self._setup_roi_sync()
@@ -1124,11 +1175,8 @@ document.addEventListener("touchmove", (e) => {{
                     for i, sel in enumerate(self.selectors):
                         if i != source_idx:
                             slider = sel.roi_x if axis == 'x' else sel.roi_y
-                            # Clamp values to target video dimensions
-                            max_val = sel.video.width if axis == 'x' else sel.video.height
-                            new_val = (min(change['new'][0], max_val),
-                                       min(change['new'][1], max_val))
-                            slider.value = new_val
+                            # All sliders use reference dimensions, so direct copy works
+                            slider.value = change['new']
                 finally:
                     self._syncing = False
             return handler
