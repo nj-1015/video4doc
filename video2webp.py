@@ -713,21 +713,28 @@ class VideoROISelector:
 
                     function drawROI() {{
                         ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        // Dim area outside ROI
+                        ctx.fillStyle = "rgba(0,0,0,0.4)";
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        // Clear the ROI area (make it visible)
+                        ctx.clearRect(roiX1, roiY1, roiX2 - roiX1, roiY2 - roiY1);
+                        // Draw ROI border
                         ctx.strokeStyle = "#00ff00";
-                        ctx.lineWidth = 2;
+                        ctx.lineWidth = 3;
                         ctx.setLineDash([]);
                         ctx.strokeRect(roiX1, roiY1, roiX2 - roiX1, roiY2 - roiY1);
                     }}
 
                     function drawSelection(x1, y1, x2, y2) {{
                         ctx.clearRect(0, 0, canvas.width, canvas.height);
-                        // Draw existing ROI faded
-                        ctx.strokeStyle = "rgba(0,255,0,0.3)";
-                        ctx.lineWidth = 1;
-                        ctx.strokeRect(roiX1, roiY1, roiX2 - roiX1, roiY2 - roiY1);
-                        // Draw new selection
+                        // Dim area outside selection
+                        ctx.fillStyle = "rgba(0,0,0,0.4)";
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        // Clear the selection area
+                        ctx.clearRect(x1, y1, x2 - x1, y2 - y1);
+                        // Draw selection border
                         ctx.strokeStyle = "#ff0000";
-                        ctx.lineWidth = 2;
+                        ctx.lineWidth = 3;
                         ctx.setLineDash([5, 5]);
                         ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
                         ctx.setLineDash([]);
@@ -875,10 +882,17 @@ class SideBySideConverter:
                         var canvas = document.getElementById("{uid}");
                         if (canvas) {{
                             var ctx = canvas.getContext("2d");
-                            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                            var w = canvas.width, h = canvas.height;
+                            var x1 = {px1}, y1 = {py1}, x2 = {px2}, y2 = {py2};
+                            // Clear and dim outside ROI
+                            ctx.clearRect(0, 0, w, h);
+                            ctx.fillStyle = "rgba(0,0,0,0.4)";
+                            ctx.fillRect(0, 0, w, h);
+                            ctx.clearRect(x1, y1, x2 - x1, y2 - y1);
+                            // Draw ROI border
                             ctx.strokeStyle = "#00ff00";
-                            ctx.lineWidth = 2;
-                            ctx.strokeRect({px1}, {py1}, {px2 - px1}, {py2 - py1});
+                            ctx.lineWidth = 3;
+                            ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
                         }}
                         var info = document.getElementById("{uid}_info");
                         if (info) {{
