@@ -618,9 +618,11 @@ class VideoROISelector:
                     x1, x2 = x2, x1
                 if y1 > y2:
                     y1, y2 = y2, y1
-                # Update sliders
+                # Update sliders without triggering preview regeneration
+                self._skip_preview_update = True
                 self.roi_x.value = (x1, x2)
                 self.roi_y.value = (y1, y2)
+                self._skip_preview_update = False
                 # Notify callback for ROI sync with other videos
                 if self.on_roi_change:
                     self.on_roi_change(self.index, (x1, x2), (y1, y2))
@@ -657,6 +659,9 @@ class VideoROISelector:
         return frame_rgb, scale
 
     def _update_preview(self, _=None):
+        # Skip if updating from drag selection (JS handles the visual update)
+        if getattr(self, '_skip_preview_update', False):
+            return
         with self.preview_output:
             clear_output(wait=True)
             frame, scale = self._get_frame_for_preview()
@@ -870,8 +875,11 @@ class SideBySideConverter:
         try:
             for i, sel in enumerate(self.selectors):
                 if i != source_idx:
+                    # Skip preview regeneration - we update via JavaScript
+                    sel._skip_preview_update = True
                     sel.roi_x.value = roi_x
                     sel.roi_y.value = roi_y
+                    sel._skip_preview_update = False
                     # Update the canvas ROI via JavaScript (more reliable in Colab)
                     scale = sel.preview_scale
                     px1, py1 = int(roi_x[0] * scale), int(roi_y[0] * scale)
