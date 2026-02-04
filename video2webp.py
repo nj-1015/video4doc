@@ -490,7 +490,7 @@ class WebPConverter:
 class VideoROISelector:
     """Interactive ROI selector for a single video."""
 
-    def __init__(self, video_info, index=0, reference_size=None):
+    def __init__(self, video_info, index=0, reference_size=None, on_roi_change=None):
         """
         Args:
             video_info: VideoInfo object
@@ -498,10 +498,12 @@ class VideoROISelector:
             reference_size: Optional (width, height) tuple for normalized coordinates.
                            If provided, ROI selection works in reference coordinates
                            and is scaled to actual video coordinates when extracting frames.
+            on_roi_change: Optional callback(index, roi_x, roi_y) called when ROI changes via drag.
         """
         self.video = video_info
         self.index = index
         self.preview_scale = 1.0  # Track scale for coordinate conversion
+        self.on_roi_change = on_roi_change  # Callback for ROI sync
 
         # Reference size for normalized ROI coordinates
         if reference_size:
@@ -587,6 +589,9 @@ class VideoROISelector:
                 # Update sliders (this will trigger preview update)
                 self.roi_x.value = (x1, x2)
                 self.roi_y.value = (y1, y2)
+                # Notify callback for ROI sync with other videos
+                if self.on_roi_change:
+                    self.on_roi_change(self.index, (x1, x2), (y1, y2))
         except (ValueError, IndexError):
             pass
 
@@ -794,18 +799,33 @@ class SideBySideConverter:
             video_list: List of VideoInfo objects
         """
         self.videos = video_list
+        self._syncing = False  # Flag to prevent recursive sync
 
         # Calculate reference size (max dimensions) for ROI alignment
         ref_width = max(v.width for v in video_list)
         ref_height = max(v.height for v in video_list)
         self.reference_size = (ref_width, ref_height)
 
-        # Create selectors with reference size for coordinate normalization
-        self.selectors = [VideoROISelector(v, i, reference_size=self.reference_size)
+        # Create selectors with reference size and sync callback
+        self.selectors = [VideoROISelector(v, i,
+                                           reference_size=self.reference_size,
+                                           on_roi_change=self._on_selector_roi_change)
                          for i, v in enumerate(video_list)]
-        self._syncing = False  # Flag to prevent recursive sync
         self._create_widgets()
         self._setup_roi_sync()
+
+    def _on_selector_roi_change(self, source_idx, roi_x, roi_y):
+        """Handle ROI change from drag selection - sync to other selectors."""
+        if not self.sync_roi.value or self._syncing:
+            return
+        self._syncing = True
+        try:
+            for i, sel in enumerate(self.selectors):
+                if i != source_idx:
+                    sel.roi_x.value = roi_x
+                    sel.roi_y.value = roi_y
+        finally:
+            self._syncing = False
 
     def _create_widgets(self):
         style = {'description_width': '120px'}
