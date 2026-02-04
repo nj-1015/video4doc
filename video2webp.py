@@ -865,8 +865,33 @@ class SideBySideConverter:
                 if i != source_idx:
                     sel.roi_x.value = roi_x
                     sel.roi_y.value = roi_y
-                    # Explicitly refresh the preview to show updated ROI
-                    sel._update_preview()
+                    # Update the canvas ROI via JavaScript (more reliable in Colab)
+                    scale = sel.preview_scale
+                    px1, py1 = int(roi_x[0] * scale), int(roi_y[0] * scale)
+                    px2, py2 = int(roi_x[1] * scale), int(roi_y[1] * scale)
+                    uid = f"roi_canvas_{i}"
+                    js_code = f'''
+                    (function() {{
+                        var canvas = document.getElementById("{uid}");
+                        if (canvas) {{
+                            var ctx = canvas.getContext("2d");
+                            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                            ctx.strokeStyle = "#00ff00";
+                            ctx.lineWidth = 2;
+                            ctx.strokeRect({px1}, {py1}, {px2 - px1}, {py2 - py1});
+                        }}
+                        var info = document.getElementById("{uid}_info");
+                        if (info) {{
+                            info.textContent = "ROI: {roi_x[1] - roi_x[0]} x {roi_y[1] - roi_y[0]} px (drag to select)";
+                        }}
+                    }})();
+                    '''
+                    try:
+                        from google.colab import output
+                        output.eval_js(js_code)
+                    except ImportError:
+                        from IPython.display import display, Javascript
+                        display(Javascript(js_code))
         finally:
             self._syncing = False
 
