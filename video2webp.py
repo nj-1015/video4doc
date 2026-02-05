@@ -1146,7 +1146,7 @@ document.addEventListener("touchmove", (e) => {{
         self._build_reorder_buttons()
 
     def _setup_roi_sync(self):
-        """Setup ROI synchronization between videos."""
+        """Setup ROI and frame synchronization between videos."""
         self._sync_handlers = []
 
         def make_sync_handler(source_idx, axis):
@@ -1164,18 +1164,35 @@ document.addEventListener("touchmove", (e) => {{
                     self._syncing = False
             return handler
 
+        def make_frame_sync_handler(source_idx):
+            def handler(change):
+                if not self.sync_roi.value or self._syncing:
+                    return
+                self._syncing = True
+                try:
+                    for i, sel in enumerate(self.selectors):
+                        if i != source_idx:
+                            # Clamp to target video's frame count
+                            sel.preview_frame.value = min(change['new'], sel.preview_frame.max)
+                finally:
+                    self._syncing = False
+            return handler
+
         for i, sel in enumerate(self.selectors):
             hx = make_sync_handler(i, 'x')
             hy = make_sync_handler(i, 'y')
+            hf = make_frame_sync_handler(i)
             sel.roi_x.observe(hx, names='value')
             sel.roi_y.observe(hy, names='value')
-            self._sync_handlers.append((sel, hx, hy))
+            sel.preview_frame.observe(hf, names='value')
+            self._sync_handlers.append((sel, hx, hy, hf))
 
     def _teardown_roi_sync(self):
-        """Remove ROI sync observers (preserves per-selector preview observers)."""
-        for sel, hx, hy in self._sync_handlers:
+        """Remove ROI/frame sync observers (preserves per-selector preview observers)."""
+        for sel, hx, hy, hf in self._sync_handlers:
             sel.roi_x.unobserve(hx, names='value')
             sel.roi_y.unobserve(hy, names='value')
+            sel.preview_frame.unobserve(hf, names='value')
         self._sync_handlers = []
 
     def _extract_roi_frame(self, video, roi, frame_num):
