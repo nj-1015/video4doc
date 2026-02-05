@@ -857,6 +857,10 @@ class SideBySideConverter:
             value=True, description='Sync ROI position', style=style
         )
 
+        self.sync_frame = widgets.Checkbox(
+            value=True, description='Sync Frame', style=style
+        )
+
         self.apply_roi_btn = widgets.Button(
             description='Apply ROI to All',
             button_style='primary',
@@ -1166,7 +1170,7 @@ document.addEventListener("touchmove", (e) => {{
 
         def make_frame_sync_handler(source_idx):
             def handler(change):
-                if not self.sync_roi.value or self._syncing:
+                if not self.sync_frame.value or self._syncing:
                     return
                 self._syncing = True
                 try:
@@ -1475,7 +1479,7 @@ document.addEventListener("touchmove", (e) => {{
 
         display(widgets.VBox([
             widgets.HTML('<h3>1. Select ROI for each video</h3>'),
-            widgets.HBox([self.sync_roi, self.apply_roi_btn]),
+            widgets.HBox([self.sync_roi, self.sync_frame, self.apply_roi_btn]),
             self.reorder_box,
             self.roi_box,
             widgets.HTML('<h3>2. Layout</h3>'),
