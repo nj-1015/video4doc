@@ -552,15 +552,17 @@ class VideoROISelector:
 
         self.preview_output = widgets.Output()
 
-        self.zoom_roi = widgets.Checkbox(
-            value=False, description='Zoom ROI', style=style
+        self.zoom_level = widgets.FloatSlider(
+            value=1.0, min=1.0, max=8.0,
+            step=0.5, description='Zoom:',
+            style=style, layout=layout, continuous_update=False
         )
 
         # Link preview updates
         self.roi_x.observe(self._update_preview, names='value')
         self.roi_y.observe(self._update_preview, names='value')
         self.preview_frame.observe(self._update_preview, names='value')
-        self.zoom_roi.observe(self._update_preview, names='value')
+        self.zoom_level.observe(self._update_preview, names='value')
 
     def _get_frame_for_preview(self):
         """Get frame for preview scaled to reference size."""
@@ -603,20 +605,52 @@ class VideoROISelector:
             px1, py1 = int(x1 * scale), int(y1 * scale)
             px2, py2 = int(x2 * scale), int(y2 * scale)
 
-            if self.zoom_roi.value and (px2 - px1) > 0 and (py2 - py1) > 0:
-                # Zoom mode: crop to ROI and scale up
-                cropped = frame[py1:py2, px1:px2]
-                img = Image.fromarray(cropped)
+            zoom = self.zoom_level.value
+            if zoom > 1.0:
+                # Zoom mode: crop around ROI center and scale up
+                roi_cx = (px1 + px2) / 2
+                roi_cy = (py1 + py2) / 2
+                # Visible area shrinks as zoom increases
+                view_w = w / zoom
+                view_h = h / zoom
+                # Clamp to frame bounds
+                vx1 = max(0, int(roi_cx - view_w / 2))
+                vy1 = max(0, int(roi_cy - view_h / 2))
+                vx2 = min(w, int(roi_cx + view_w / 2))
+                vy2 = min(h, int(roi_cy + view_h / 2))
+                if vx2 - vx1 < 1 or vy2 - vy1 < 1:
+                    return
+
+                cropped = frame[vy1:vy2, vx1:vx2]
+                img = Image.fromarray(cropped).convert('RGBA')
+                cw, ch = img.size
+
+                # Draw ROI border in cropped coordinates
+                cpx1 = max(0, px1 - vx1)
+                cpy1 = max(0, py1 - vy1)
+                cpx2 = min(cw, px2 - vx1)
+                cpy2 = min(ch, py2 - vy1)
+
+                overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+                from PIL import ImageDraw
+                draw = ImageDraw.Draw(overlay)
+                # Dim outside ROI
+                dim_color = (0, 0, 0, 100)
+                draw.rectangle([0, 0, cw, cpy1], fill=dim_color)
+                draw.rectangle([0, cpy2, cw, ch], fill=dim_color)
+                draw.rectangle([0, cpy1, cpx1, cpy2], fill=dim_color)
+                draw.rectangle([cpx2, cpy1, cw, cpy2], fill=dim_color)
+                # ROI border
+                border_color = (0, 255, 0, 255)
+                for i in range(3):
+                    draw.rectangle([cpx1+i, cpy1+i, cpx2-i, cpy2-i], outline=border_color)
+                img = Image.alpha_composite(img, overlay).convert('RGB')
+
                 # Scale up to fill preview area
                 max_preview = 400
-                crop_w, crop_h = img.size
-                zoom_scale = max_preview / max(crop_w, crop_h)
-                if zoom_scale > 1:
-                    img = img.resize((int(crop_w * zoom_scale), int(crop_h * zoom_scale)),
-                                     Image.NEAREST)
-                elif zoom_scale < 1:
-                    img = img.resize((int(crop_w * zoom_scale), int(crop_h * zoom_scale)),
-                                     Image.LANCZOS)
+                up_scale = max_preview / max(cw, ch)
+                img = img.resize((int(cw * up_scale), int(ch * up_scale)),
+                                 Image.LANCZOS)
             else:
                 # Normal mode: full frame with ROI overlay
                 img = Image.fromarray(frame).convert('RGBA')
@@ -691,7 +725,7 @@ class VideoROISelector:
             self.preview_frame,
             self.roi_x,
             self.roi_y,
-            self.zoom_roi,
+            self.zoom_level,
             self.preview_output,
             scale_info_widget
         ])
