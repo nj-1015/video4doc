@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from PIL import Image
 import ipywidgets as widgets
-from IPython.display import display, HTML, clear_output
+from IPython.display import display, HTML, clear_output, update_display
 import io
 import base64
 import os
@@ -556,6 +556,8 @@ class VideoROISelector:
         self._roi_coords.observe(self._on_roi_drag, names='value')
 
         self.preview_output = widgets.Output()
+        self.preview_display_id = f'roi_preview_{self.index}'
+        self._preview_initialized = False
 
         # Link preview updates
         self.roi_x.observe(self._update_preview, names='value')
@@ -680,36 +682,34 @@ class VideoROISelector:
         return frame_rgb, scale
 
     def _update_preview(self, _=None):
-        with self.preview_output:
-            clear_output(wait=True)
-            frame, scale = self._get_frame_for_preview()
-            if frame is not None:
-                self.preview_scale = scale
-                h, w = frame.shape[:2]
+        frame, scale = self._get_frame_for_preview()
+        if frame is not None:
+            self.preview_scale = scale
+            h, w = frame.shape[:2]
 
-                # Convert current ROI to preview coordinates
-                x1, x2 = self.roi_x.value
-                y1, y2 = self.roi_y.value
-                px1, py1 = int(x1 * scale), int(y1 * scale)
-                px2, py2 = int(x2 * scale), int(y2 * scale)
+            # Convert current ROI to preview coordinates
+            x1, x2 = self.roi_x.value
+            y1, y2 = self.roi_y.value
+            px1, py1 = int(x1 * scale), int(y1 * scale)
+            px2, py2 = int(x2 * scale), int(y2 * scale)
 
-                img = Image.fromarray(frame)
-                buffer = io.BytesIO()
-                img.save(buffer, format='PNG')
-                img_str = base64.b64encode(buffer.getvalue()).decode()
+            img = Image.fromarray(frame)
+            buffer = io.BytesIO()
+            img.save(buffer, format='PNG')
+            img_str = base64.b64encode(buffer.getvalue()).decode()
 
-                # Unique ID for this selector
-                uid = f"roi_canvas_{self.index}"
+            # Unique ID for this selector
+            uid = f"roi_canvas_{self.index}"
 
-                # Register Colab callback for receiving ROI coordinates from JavaScript
-                callback_name = f"roi_callback_{self.index}"
-                try:
-                    from google.colab import output
-                    output.register_callback(callback_name, self._handle_roi_from_js)
-                except ImportError:
-                    pass  # Not in Colab
+            # Register Colab callback for receiving ROI coordinates from JavaScript
+            callback_name = f"roi_callback_{self.index}"
+            try:
+                from google.colab import output
+                output.register_callback(callback_name, self._handle_roi_from_js)
+            except ImportError:
+                pass  # Not in Colab
 
-                html_content = f'''
+            html_content = f'''
                 <div style="position:relative;display:inline-block;cursor:crosshair;" id="{uid}_container">
                     <img id="{uid}_img" src="data:image/png;base64,{img_str}" style="display:block;"/>
                     <canvas id="{uid}" width="{w}" height="{h}" style="position:absolute;top:0;left:0;"></canvas>
@@ -840,7 +840,15 @@ class VideoROISelector:
                 }})();
                 </script>
                 '''
-                display(HTML(html_content))
+            # Use display_id for context-independent updates
+            if not self._preview_initialized:
+                # First time: display inside Output widget for layout, with display_id
+                with self.preview_output:
+                    display(HTML(html_content), display_id=self.preview_display_id)
+                self._preview_initialized = True
+            else:
+                # Subsequent updates: use update_display (works in any context)
+                update_display(HTML(html_content), display_id=self.preview_display_id)
 
     def get_roi(self):
         """Return current ROI as (x1, y1, x2, y2) in actual video coordinates."""
@@ -905,26 +913,20 @@ class SideBySideConverter:
         if not self.sync_roi.value or self._syncing:
             return
         self._syncing = True
-
-        def deferred_sync():
-            """Run outside Colab callback context to allow Output widget updates."""
-            try:
-                for i, sel in enumerate(self.selectors):
-                    if i != source_idx:
-                        # Update slider values
-                        sel.roi_x.unobserve(sel._update_preview, names='value')
-                        sel.roi_y.unobserve(sel._update_preview, names='value')
-                        sel.roi_x.value = roi_x
-                        sel.roi_y.value = roi_y
-                        sel.roi_x.observe(sel._update_preview, names='value')
-                        sel.roi_y.observe(sel._update_preview, names='value')
-                        # Regenerate preview (works outside callback context)
-                        sel._update_preview()
-            finally:
-                self._syncing = False
-
-        # Schedule to run after Colab callback returns (escapes callback context)
-        threading.Timer(0.05, deferred_sync).start()
+        try:
+            for i, sel in enumerate(self.selectors):
+                if i != source_idx:
+                    # Update slider values
+                    sel.roi_x.unobserve(sel._update_preview, names='value')
+                    sel.roi_y.unobserve(sel._update_preview, names='value')
+                    sel.roi_x.value = roi_x
+                    sel.roi_y.value = roi_y
+                    sel.roi_x.observe(sel._update_preview, names='value')
+                    sel.roi_y.observe(sel._update_preview, names='value')
+                    # Update preview (update_display works in any context)
+                    sel._update_preview()
+        finally:
+            self._syncing = False
 
     def _create_widgets(self):
         style = {'description_width': '120px'}
