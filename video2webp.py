@@ -8,7 +8,6 @@ from IPython.display import display, HTML, clear_output
 import io
 import base64
 import os
-import threading
 
 
 class GDriveFolderPicker:
@@ -551,93 +550,12 @@ class VideoROISelector:
             style=style, layout=layout
         )
 
-        # Hidden widget for receiving coordinates from JavaScript
-        self._roi_coords = widgets.Text(value='', layout=widgets.Layout(display='none'))
-        self._roi_coords.observe(self._on_roi_drag, names='value')
-
         self.preview_output = widgets.Output()
 
         # Link preview updates
         self.roi_x.observe(self._update_preview, names='value')
         self.roi_y.observe(self._update_preview, names='value')
         self.preview_frame.observe(self._update_preview, names='value')
-
-    def _on_roi_drag(self, change):
-        """Handle ROI coordinates from JavaScript drag selection."""
-        if not change['new']:
-            return
-        try:
-            coords = change['new'].split(',')
-            if len(coords) == 4:
-                x1, y1, x2, y2 = [int(float(c)) for c in coords]
-                # Convert from preview coordinates to reference coordinates
-                scale = self.preview_scale
-                if scale > 0:
-                    x1 = int(x1 / scale)
-                    y1 = int(y1 / scale)
-                    x2 = int(x2 / scale)
-                    y2 = int(y2 / scale)
-                # Clamp to reference dimensions (sliders use reference coords)
-                x1 = max(0, min(x1, self.ref_width))
-                x2 = max(0, min(x2, self.ref_width))
-                y1 = max(0, min(y1, self.ref_height))
-                y2 = max(0, min(y2, self.ref_height))
-                # Ensure x1 < x2 and y1 < y2
-                if x1 > x2:
-                    x1, x2 = x2, x1
-                if y1 > y2:
-                    y1, y2 = y2, y1
-                # Update sliders (this will trigger preview update)
-                self.roi_x.value = (x1, x2)
-                self.roi_y.value = (y1, y2)
-                # Notify callback for ROI sync with other videos
-                if self.on_roi_change:
-                    self.on_roi_change(self.index, (x1, x2), (y1, y2))
-        except (ValueError, IndexError):
-            pass
-
-    def _handle_roi_from_js(self, coord_str):
-        """Handle ROI coordinates from JavaScript via Colab callback."""
-        try:
-            coords = coord_str.split(',')
-            if len(coords) == 4:
-                # These are preview coordinates from JavaScript
-                px1, py1, px2, py2 = [int(float(c)) for c in coords]
-
-                # Convert from preview coordinates to reference coordinates
-                scale = self.preview_scale
-                if scale > 0:
-                    ref_x1 = int(px1 / scale)
-                    ref_y1 = int(py1 / scale)
-                    ref_x2 = int(px2 / scale)
-                    ref_y2 = int(py2 / scale)
-                else:
-                    ref_x1, ref_y1, ref_x2, ref_y2 = px1, py1, px2, py2
-
-                # Clamp to reference dimensions
-                ref_x1 = max(0, min(ref_x1, self.ref_width))
-                ref_x2 = max(0, min(ref_x2, self.ref_width))
-                ref_y1 = max(0, min(ref_y1, self.ref_height))
-                ref_y2 = max(0, min(ref_y2, self.ref_height))
-
-                # Ensure x1 < x2 and y1 < y2
-                if ref_x1 > ref_x2:
-                    ref_x1, ref_x2 = ref_x2, ref_x1
-                if ref_y1 > ref_y2:
-                    ref_y1, ref_y2 = ref_y2, ref_y1
-
-                # Use Timer to escape Colab callback context
-                # Update sliders WITH observers attached - this triggers _update_preview
-                def update_sliders():
-                    self.roi_x.value = (ref_x1, ref_x2)
-                    self.roi_y.value = (ref_y1, ref_y2)
-                    # Sync to other videos
-                    if self.on_roi_change:
-                        self.on_roi_change(self.index, (ref_x1, ref_x2), (ref_y1, ref_y2))
-
-                threading.Timer(0.01, update_sliders).start()
-        except (ValueError, IndexError):
-            pass
 
     def _get_frame_for_preview(self):
         """Get frame for preview scaled to reference size."""
@@ -680,154 +598,46 @@ class VideoROISelector:
             px1, py1 = int(x1 * scale), int(y1 * scale)
             px2, py2 = int(x2 * scale), int(y2 * scale)
 
-            img = Image.fromarray(frame)
+            # Create image with ROI overlay using PIL
+            img = Image.fromarray(frame).convert('RGBA')
+
+            # Create semi-transparent overlay for dimming outside ROI
+            overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+            from PIL import ImageDraw
+            draw = ImageDraw.Draw(overlay)
+
+            # Dim areas outside ROI (draw semi-transparent black rectangles)
+            dim_color = (0, 0, 0, 100)  # Semi-transparent black
+            # Top
+            draw.rectangle([0, 0, w, py1], fill=dim_color)
+            # Bottom
+            draw.rectangle([0, py2, w, h], fill=dim_color)
+            # Left
+            draw.rectangle([0, py1, px1, py2], fill=dim_color)
+            # Right
+            draw.rectangle([px2, py1, w, py2], fill=dim_color)
+
+            # Draw ROI border (green)
+            border_color = (0, 255, 0, 255)
+            for i in range(3):  # 3px border
+                draw.rectangle([px1+i, py1+i, px2-i, py2-i], outline=border_color)
+
+            # Composite overlay onto image
+            img = Image.alpha_composite(img, overlay)
+            img = img.convert('RGB')
+
+            # Convert to base64
             buffer = io.BytesIO()
             img.save(buffer, format='PNG')
             img_str = base64.b64encode(buffer.getvalue()).decode()
 
-            # Unique ID for this selector
-            uid = f"roi_canvas_{self.index}"
-
-            # Register Colab callback for receiving ROI coordinates from JavaScript
-            callback_name = f"roi_callback_{self.index}"
-            try:
-                from google.colab import output
-                output.register_callback(callback_name, self._handle_roi_from_js)
-            except ImportError:
-                pass  # Not in Colab
-
+            # Simple HTML with just the image
             html_content = f'''
-                <div style="position:relative;display:inline-block;cursor:crosshair;" id="{uid}_container">
-                    <img id="{uid}_img" src="data:image/png;base64,{img_str}" style="display:block;"/>
-                    <canvas id="{uid}" width="{w}" height="{h}" style="position:absolute;top:0;left:0;"></canvas>
+                <div>
+                    <img src="data:image/png;base64,{img_str}" style="display:block;"/>
                 </div>
-                <div id="{uid}_info" style="font-family:monospace;margin-top:4px;">ROI: {x2-x1} x {y2-y1} px (drag to select)</div>
-                <script>
-                (function() {{
-                    // Global ROI state for cross-script access (used by sync)
-                    window._roiState = window._roiState || {{}};
-                    var uid = "{uid}";
-                    window._roiState[uid] = {{
-                        x1: {px1}, y1: {py1}, x2: {px2}, y2: {py2}
-                    }};
-
-                    var canvas = document.getElementById("{uid}");
-                    var ctx = canvas.getContext("2d");
-                    var container = document.getElementById("{uid}_container");
-                    var info = document.getElementById("{uid}_info");
-                    var drawing = false;
-                    var startX, startY, endX, endY;
-
-                    function sendToPython(coordStr) {{
-                        // Use Colab's callback mechanism
-                        if (typeof google !== 'undefined' && google.colab) {{
-                            google.colab.kernel.invokeFunction('{callback_name}', [coordStr], {{}});
-                        }}
-                    }}
-
-                    function drawROI() {{
-                        var roi = window._roiState[uid];
-                        ctx.clearRect(0, 0, canvas.width, canvas.height);
-                        // Dim area outside ROI
-                        ctx.fillStyle = "rgba(0,0,0,0.4)";
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
-                        // Clear the ROI area (make it visible)
-                        ctx.clearRect(roi.x1, roi.y1, roi.x2 - roi.x1, roi.y2 - roi.y1);
-                        // Draw ROI border
-                        ctx.strokeStyle = "#00ff00";
-                        ctx.lineWidth = 3;
-                        ctx.setLineDash([]);
-                        ctx.strokeRect(roi.x1, roi.y1, roi.x2 - roi.x1, roi.y2 - roi.y1);
-                    }}
-
-                    function drawSelection(x1, y1, x2, y2) {{
-                        ctx.clearRect(0, 0, canvas.width, canvas.height);
-                        // Dim area outside selection
-                        ctx.fillStyle = "rgba(0,0,0,0.4)";
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
-                        // Clear the selection area
-                        ctx.clearRect(x1, y1, x2 - x1, y2 - y1);
-                        // Draw selection border
-                        ctx.strokeStyle = "#ff0000";
-                        ctx.lineWidth = 3;
-                        ctx.setLineDash([5, 5]);
-                        ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-                        ctx.setLineDash([]);
-                    }}
-
-                    function getPos(e) {{
-                        var rect = canvas.getBoundingClientRect();
-                        var x, y;
-                        if (e.touches) {{
-                            x = e.touches[0].clientX - rect.left;
-                            y = e.touches[0].clientY - rect.top;
-                        }} else {{
-                            x = e.clientX - rect.left;
-                            y = e.clientY - rect.top;
-                        }}
-                        return {{x: Math.max(0, Math.min(x, canvas.width)), y: Math.max(0, Math.min(y, canvas.height))}};
-                    }}
-
-                    function onStart(e) {{
-                        e.preventDefault();
-                        drawing = true;
-                        var pos = getPos(e);
-                        startX = pos.x;
-                        startY = pos.y;
-                        endX = pos.x;
-                        endY = pos.y;
-                    }}
-
-                    function onMove(e) {{
-                        if (!drawing) return;
-                        e.preventDefault();
-                        var pos = getPos(e);
-                        endX = pos.x;
-                        endY = pos.y;
-                        var x1 = Math.min(startX, endX), y1 = Math.min(startY, endY);
-                        var x2 = Math.max(startX, endX), y2 = Math.max(startY, endY);
-                        drawSelection(x1, y1, x2, y2);
-                        var w = Math.abs(x2 - x1) / {scale};
-                        var h = Math.abs(y2 - y1) / {scale};
-                        info.textContent = "Selecting: " + Math.round(w) + " x " + Math.round(h) + " px";
-                    }}
-
-                    function onEnd(e) {{
-                        if (!drawing) return;
-                        drawing = false;
-                        var x1 = Math.min(startX, endX), y1 = Math.min(startY, endY);
-                        var x2 = Math.max(startX, endX), y2 = Math.max(startY, endY);
-                        if (Math.abs(x2 - x1) > 5 && Math.abs(y2 - y1) > 5) {{
-                            // Update global ROI state
-                            window._roiState[uid] = {{x1: x1, y1: y1, x2: x2, y2: y2}};
-                            // Send coordinates to Python via Colab callback
-                            var coordStr = x1 + "," + y1 + "," + x2 + "," + y2;
-                            sendToPython(coordStr);
-                            info.textContent = "ROI updated: " + Math.round((x2-x1)/{scale}) + " x " + Math.round((y2-y1)/{scale}) + " px";
-                        }}
-                        drawROI();
-                    }}
-
-                    canvas.addEventListener("mousedown", onStart);
-                    canvas.addEventListener("mousemove", onMove);
-                    canvas.addEventListener("mouseup", onEnd);
-                    canvas.addEventListener("mouseleave", onEnd);
-                    canvas.addEventListener("touchstart", onStart);
-                    canvas.addEventListener("touchmove", onMove);
-                    canvas.addEventListener("touchend", onEnd);
-
-                    // Expose global function for Python to update ROI via eval_js
-                    window["updateROI_" + uid] = function(x1, y1, x2, y2, infoText) {{
-                        window._roiState[uid] = {{x1: x1, y1: y1, x2: x2, y2: y2}};
-                        drawROI();
-                        if (infoText) info.textContent = infoText;
-                    }};
-
-                    drawROI();
-                }})();
-                </script>
+                <div style="font-family:monospace;margin-top:4px;">ROI: {x2-x1} x {y2-y1} px (use sliders to adjust)</div>
                 '''
-            # Use Output widget with clear_output for proper script execution
             self.preview_output.clear_output(wait=True)
             with self.preview_output:
                 display(HTML(html_content))
@@ -861,7 +671,6 @@ class VideoROISelector:
             self.preview_frame,
             self.roi_x,
             self.roi_y,
-            self._roi_coords,  # Hidden widget for JS communication
             self.preview_output,
             scale_info_widget
         ])
