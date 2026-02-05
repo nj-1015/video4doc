@@ -867,21 +867,22 @@ class VideoROISelector:
 
     def get_widget(self):
         """Return widget for display."""
-        # Show scale info if video was rescaled for alignment
+        # Show scale info under the image if video was rescaled for alignment
         if self.is_scaled:
-            scale_info = f'<br><span style="color:#ff9800;">⚠ Scaled to {self.ref_width}x{self.ref_height} for ROI sync</span>'
+            scale_info_widget = widgets.HTML(f'<small style="color:#ff9800;">⚠ Scaled to {self.ref_width}x{self.ref_height} for ROI sync</small>')
         else:
-            scale_info = ''
+            scale_info_widget = widgets.HTML('')  # Empty placeholder for alignment
 
         return widgets.VBox([
             widgets.HTML(f'<b>Video {self.index + 1}: {os.path.basename(self.video.filename)}</b>'),
-            widgets.HTML(f'<small>{self.video.width}x{self.video.height}, {self.video.total_frames} frames{scale_info}</small>'),
+            widgets.HTML(f'<small>{self.video.width}x{self.video.height}, {self.video.total_frames} frames</small>'),
             self.caption,
             self.preview_frame,
             self.roi_x,
             self.roi_y,
             self._roi_coords,  # Hidden widget for JS communication
-            self.preview_output
+            self.preview_output,
+            scale_info_widget
         ])
 
 
