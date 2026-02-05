@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from PIL import Image
 import ipywidgets as widgets
-from IPython.display import display, HTML, clear_output
+from IPython.display import display, HTML, clear_output, update_display
 import io
 import base64
 import os
@@ -556,6 +556,8 @@ class VideoROISelector:
         self._roi_coords.observe(self._on_roi_drag, names='value')
 
         self.preview_output = widgets.Output()
+        self.preview_display_id = f'roi_preview_{self.index}'
+        self._preview_initialized = False
 
         # Link preview updates
         self.roi_x.observe(self._update_preview, names='value')
@@ -680,7 +682,7 @@ class VideoROISelector:
 
         return frame_rgb, scale
 
-    def _update_preview(self, _=None):
+    def _update_preview(self, _=None, from_sync=False):
         frame, scale = self._get_frame_for_preview()
         if frame is not None:
             self.preview_scale = scale
@@ -839,11 +841,17 @@ class VideoROISelector:
                 }})();
                 </script>
                 '''
-            # Clear and redisplay within Output widget context
-            # This works because threading.Timer escapes Colab callback context
-            self.preview_output.clear_output(wait=True)
-            with self.preview_output:
-                display(HTML(html_content))
+            # Hybrid display strategy based on context
+            if from_sync and self._preview_initialized:
+                # Sync update from Timer thread - use update_display
+                # This works because display_id was already established
+                update_display(HTML(html_content), display_id=self.preview_display_id)
+            else:
+                # Normal update from main thread - use clear_output
+                self.preview_output.clear_output(wait=True)
+                with self.preview_output:
+                    display(HTML(html_content), display_id=self.preview_display_id)
+                self._preview_initialized = True
 
     def get_roi(self):
         """Return current ROI as (x1, y1, x2, y2) in actual video coordinates."""
@@ -919,8 +927,8 @@ class SideBySideConverter:
                     sel.roi_y.value = roi_y
                     sel.roi_x.observe(sel._update_preview, names='value')
                     sel.roi_y.observe(sel._update_preview, names='value')
-                    # Update preview
-                    sel._update_preview()
+                    # Update preview (from_sync=True for Timer thread context)
+                    sel._update_preview(from_sync=True)
         finally:
             self._syncing = False
 
