@@ -699,15 +699,19 @@ class VideoROISelector:
                 <div id="{uid}_info" style="font-family:monospace;margin-top:4px;">ROI: {x2-x1} x {y2-y1} px (drag to select)</div>
                 <script>
                 (function() {{
+                    // Global ROI state for cross-script access (used by sync)
+                    window._roiState = window._roiState || {{}};
+                    var uid = "{uid}";
+                    window._roiState[uid] = {{
+                        x1: {px1}, y1: {py1}, x2: {px2}, y2: {py2}
+                    }};
+
                     var canvas = document.getElementById("{uid}");
                     var ctx = canvas.getContext("2d");
                     var container = document.getElementById("{uid}_container");
                     var info = document.getElementById("{uid}_info");
                     var drawing = false;
                     var startX, startY, endX, endY;
-
-                    // Current ROI
-                    var roiX1 = {px1}, roiY1 = {py1}, roiX2 = {px2}, roiY2 = {py2};
 
                     function sendToPython(coordStr) {{
                         // Use Colab's callback mechanism
@@ -717,17 +721,18 @@ class VideoROISelector:
                     }}
 
                     function drawROI() {{
+                        var roi = window._roiState[uid];
                         ctx.clearRect(0, 0, canvas.width, canvas.height);
                         // Dim area outside ROI
                         ctx.fillStyle = "rgba(0,0,0,0.4)";
                         ctx.fillRect(0, 0, canvas.width, canvas.height);
                         // Clear the ROI area (make it visible)
-                        ctx.clearRect(roiX1, roiY1, roiX2 - roiX1, roiY2 - roiY1);
+                        ctx.clearRect(roi.x1, roi.y1, roi.x2 - roi.x1, roi.y2 - roi.y1);
                         // Draw ROI border
                         ctx.strokeStyle = "#00ff00";
                         ctx.lineWidth = 3;
                         ctx.setLineDash([]);
-                        ctx.strokeRect(roiX1, roiY1, roiX2 - roiX1, roiY2 - roiY1);
+                        ctx.strokeRect(roi.x1, roi.y1, roi.x2 - roi.x1, roi.y2 - roi.y1);
                     }}
 
                     function drawSelection(x1, y1, x2, y2) {{
@@ -764,6 +769,8 @@ class VideoROISelector:
                         var pos = getPos(e);
                         startX = pos.x;
                         startY = pos.y;
+                        endX = pos.x;
+                        endY = pos.y;
                     }}
 
                     function onMove(e) {{
@@ -786,7 +793,8 @@ class VideoROISelector:
                         var x1 = Math.min(startX, endX), y1 = Math.min(startY, endY);
                         var x2 = Math.max(startX, endX), y2 = Math.max(startY, endY);
                         if (Math.abs(x2 - x1) > 5 && Math.abs(y2 - y1) > 5) {{
-                            roiX1 = x1; roiY1 = y1; roiX2 = x2; roiY2 = y2;
+                            // Update global ROI state
+                            window._roiState[uid] = {{x1: x1, y1: y1, x2: x2, y2: y2}};
                             // Send coordinates to Python via Colab callback
                             var coordStr = x1 + "," + y1 + "," + x2 + "," + y2;
                             sendToPython(coordStr);
@@ -887,11 +895,15 @@ class SideBySideConverter:
                     uid = f"roi_canvas_{i}"
                     js_code = f'''
                     (function() {{
-                        var canvas = document.getElementById("{uid}");
+                        var uid = "{uid}";
+                        var x1 = {px1}, y1 = {py1}, x2 = {px2}, y2 = {py2};
+                        // Update global ROI state so subsequent drags use correct values
+                        window._roiState = window._roiState || {{}};
+                        window._roiState[uid] = {{x1: x1, y1: y1, x2: x2, y2: y2}};
+                        var canvas = document.getElementById(uid);
                         if (canvas) {{
                             var ctx = canvas.getContext("2d");
                             var w = canvas.width, h = canvas.height;
-                            var x1 = {px1}, y1 = {py1}, x2 = {px2}, y2 = {py2};
                             // Clear and dim outside ROI
                             ctx.clearRect(0, 0, w, h);
                             ctx.fillStyle = "rgba(0,0,0,0.4)";
@@ -902,7 +914,7 @@ class SideBySideConverter:
                             ctx.lineWidth = 3;
                             ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
                         }}
-                        var info = document.getElementById("{uid}_info");
+                        var info = document.getElementById(uid + "_info");
                         if (info) {{
                             info.textContent = "ROI: {roi_x[1] - roi_x[0]} x {roi_y[1] - roi_y[0]} px (drag to select)";
                         }}
