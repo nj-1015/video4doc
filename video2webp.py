@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from PIL import Image
 import ipywidgets as widgets
-from IPython.display import display, HTML, clear_output, update_display
+from IPython.display import display, HTML, clear_output
 import io
 import base64
 import os
@@ -556,8 +556,6 @@ class VideoROISelector:
         self._roi_coords.observe(self._on_roi_drag, names='value')
 
         self.preview_output = widgets.Output()
-        self.preview_display_id = f'roi_preview_{self.index}'
-        self._preview_initialized = False
 
         # Link preview updates
         self.roi_x.observe(self._update_preview, names='value')
@@ -841,15 +839,11 @@ class VideoROISelector:
                 }})();
                 </script>
                 '''
-            # Use display_id for context-independent updates
-            if not self._preview_initialized:
-                # First time: display inside Output widget for layout, with display_id
-                with self.preview_output:
-                    display(HTML(html_content), display_id=self.preview_display_id)
-                self._preview_initialized = True
-            else:
-                # Subsequent updates: use update_display (works in any context)
-                update_display(HTML(html_content), display_id=self.preview_display_id)
+            # Clear and redisplay within Output widget context
+            # This works because threading.Timer escapes Colab callback context
+            self.preview_output.clear_output(wait=True)
+            with self.preview_output:
+                display(HTML(html_content))
 
     def get_roi(self):
         """Return current ROI as (x1, y1, x2, y2) in actual video coordinates."""
@@ -925,7 +919,7 @@ class SideBySideConverter:
                     sel.roi_y.value = roi_y
                     sel.roi_x.observe(sel._update_preview, names='value')
                     sel.roi_y.observe(sel._update_preview, names='value')
-                    # Update preview (update_display works in any context)
+                    # Update preview
                     sel._update_preview()
         finally:
             self._syncing = False
