@@ -600,36 +600,52 @@ class VideoROISelector:
         try:
             coords = coord_str.split(',')
             if len(coords) == 4:
-                x1, y1, x2, y2 = [int(float(c)) for c in coords]
+                # These are preview coordinates from JavaScript
+                px1, py1, px2, py2 = [int(float(c)) for c in coords]
+
                 # Convert from preview coordinates to reference coordinates
                 scale = self.preview_scale
                 if scale > 0:
-                    x1 = int(x1 / scale)
-                    y1 = int(y1 / scale)
-                    x2 = int(x2 / scale)
-                    y2 = int(y2 / scale)
+                    ref_x1 = int(px1 / scale)
+                    ref_y1 = int(py1 / scale)
+                    ref_x2 = int(px2 / scale)
+                    ref_y2 = int(py2 / scale)
+                else:
+                    ref_x1, ref_y1, ref_x2, ref_y2 = px1, py1, px2, py2
+
                 # Clamp to reference dimensions
-                x1 = max(0, min(x1, self.ref_width))
-                x2 = max(0, min(x2, self.ref_width))
-                y1 = max(0, min(y1, self.ref_height))
-                y2 = max(0, min(y2, self.ref_height))
+                ref_x1 = max(0, min(ref_x1, self.ref_width))
+                ref_x2 = max(0, min(ref_x2, self.ref_width))
+                ref_y1 = max(0, min(ref_y1, self.ref_height))
+                ref_y2 = max(0, min(ref_y2, self.ref_height))
+
                 # Ensure x1 < x2 and y1 < y2
-                if x1 > x2:
-                    x1, x2 = x2, x1
-                if y1 > y2:
-                    y1, y2 = y2, y1
-                # Update sliders (unobserve first to prevent multiple redraws)
+                if ref_x1 > ref_x2:
+                    ref_x1, ref_x2 = ref_x2, ref_x1
+                if ref_y1 > ref_y2:
+                    ref_y1, ref_y2 = ref_y2, ref_y1
+
+                # Update sliders (unobserve to prevent triggering _update_preview)
                 self.roi_x.unobserve(self._update_preview, names='value')
                 self.roi_y.unobserve(self._update_preview, names='value')
-                self.roi_x.value = (x1, x2)
-                self.roi_y.value = (y1, y2)
+                self.roi_x.value = (ref_x1, ref_x2)
+                self.roi_y.value = (ref_y1, ref_y2)
                 self.roi_x.observe(self._update_preview, names='value')
                 self.roi_y.observe(self._update_preview, names='value')
-                # Explicitly update preview (observers may not fire in Colab callback context)
-                self._update_preview()
+
+                # Update ROI visual via JavaScript (works in Colab callback context)
+                # The JS drawROI() already ran in onEnd(), but we call again to ensure sync
+                uid = f"roi_canvas_{self.index}"
+                info_text = f"ROI: {ref_x2 - ref_x1} x {ref_y2 - ref_y1} px (drag to select)"
+                try:
+                    from google.colab import output
+                    output.eval_js(f'if(window.updateROI_{uid})window.updateROI_{uid}({px1},{py1},{px2},{py2},"{info_text}")')
+                except ImportError:
+                    pass
+
                 # Notify callback for ROI sync with other videos
                 if self.on_roi_change:
-                    self.on_roi_change(self.index, (x1, x2), (y1, y2))
+                    self.on_roi_change(self.index, (ref_x1, ref_x2), (ref_y1, ref_y2))
         except (ValueError, IndexError):
             pass
 
@@ -812,6 +828,13 @@ class VideoROISelector:
                     canvas.addEventListener("touchmove", onMove);
                     canvas.addEventListener("touchend", onEnd);
 
+                    // Expose global function for Python to update ROI via eval_js
+                    window["updateROI_" + uid] = function(x1, y1, x2, y2, infoText) {{
+                        window._roiState[uid] = {{x1: x1, y1: y1, x2: x2, y2: y2}};
+                        drawROI();
+                        if (infoText) info.textContent = infoText;
+                    }};
+
                     drawROI();
                 }})();
                 </script>
@@ -884,15 +907,25 @@ class SideBySideConverter:
         try:
             for i, sel in enumerate(self.selectors):
                 if i != source_idx:
-                    # Unobserve to prevent multiple redraws
+                    # Unobserve to prevent triggering _update_preview
                     sel.roi_x.unobserve(sel._update_preview, names='value')
                     sel.roi_y.unobserve(sel._update_preview, names='value')
                     sel.roi_x.value = roi_x
                     sel.roi_y.value = roi_y
                     sel.roi_x.observe(sel._update_preview, names='value')
                     sel.roi_y.observe(sel._update_preview, names='value')
-                    # Explicitly update preview
-                    sel._update_preview()
+
+                    # Update ROI visual via JavaScript
+                    scale = sel.preview_scale
+                    px1, py1 = int(roi_x[0] * scale), int(roi_y[0] * scale)
+                    px2, py2 = int(roi_x[1] * scale), int(roi_y[1] * scale)
+                    uid = f"roi_canvas_{i}"
+                    info_text = f"ROI: {roi_x[1] - roi_x[0]} x {roi_y[1] - roi_y[0]} px (drag to select)"
+                    try:
+                        from google.colab import output
+                        output.eval_js(f'if(window.updateROI_{uid})window.updateROI_{uid}({px1},{py1},{px2},{py2},"{info_text}")')
+                    except ImportError:
+                        pass
         finally:
             self._syncing = False
 
