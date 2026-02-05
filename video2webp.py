@@ -618,11 +618,9 @@ class VideoROISelector:
                     x1, x2 = x2, x1
                 if y1 > y2:
                     y1, y2 = y2, y1
-                # Update sliders without triggering preview regeneration
-                self._skip_preview_update = True
+                # Update sliders - this triggers preview regeneration which redraws ROI
                 self.roi_x.value = (x1, x2)
                 self.roi_y.value = (y1, y2)
-                self._skip_preview_update = False
                 # Notify callback for ROI sync with other videos
                 if self.on_roi_change:
                     self.on_roi_change(self.index, (x1, x2), (y1, y2))
@@ -659,9 +657,6 @@ class VideoROISelector:
         return frame_rgb, scale
 
     def _update_preview(self, _=None):
-        # Skip if updating from drag selection (JS handles the visual update)
-        if getattr(self, '_skip_preview_update', False):
-            return
         with self.preview_output:
             clear_output(wait=True)
             frame, scale = self._get_frame_for_preview()
