@@ -552,10 +552,15 @@ class VideoROISelector:
 
         self.preview_output = widgets.Output()
 
+        self.zoom_roi = widgets.Checkbox(
+            value=False, description='Zoom ROI', style=style
+        )
+
         # Link preview updates
         self.roi_x.observe(self._update_preview, names='value')
         self.roi_y.observe(self._update_preview, names='value')
         self.preview_frame.observe(self._update_preview, names='value')
+        self.zoom_roi.observe(self._update_preview, names='value')
 
     def _get_frame_for_preview(self):
         """Get frame for preview scaled to reference size."""
@@ -598,33 +603,48 @@ class VideoROISelector:
             px1, py1 = int(x1 * scale), int(y1 * scale)
             px2, py2 = int(x2 * scale), int(y2 * scale)
 
-            # Create image with ROI overlay using PIL
-            img = Image.fromarray(frame).convert('RGBA')
+            if self.zoom_roi.value and (px2 - px1) > 0 and (py2 - py1) > 0:
+                # Zoom mode: crop to ROI and scale up
+                cropped = frame[py1:py2, px1:px2]
+                img = Image.fromarray(cropped)
+                # Scale up to fill preview area
+                max_preview = 400
+                crop_w, crop_h = img.size
+                zoom_scale = max_preview / max(crop_w, crop_h)
+                if zoom_scale > 1:
+                    img = img.resize((int(crop_w * zoom_scale), int(crop_h * zoom_scale)),
+                                     Image.NEAREST)
+                elif zoom_scale < 1:
+                    img = img.resize((int(crop_w * zoom_scale), int(crop_h * zoom_scale)),
+                                     Image.LANCZOS)
+            else:
+                # Normal mode: full frame with ROI overlay
+                img = Image.fromarray(frame).convert('RGBA')
 
-            # Create semi-transparent overlay for dimming outside ROI
-            overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
-            from PIL import ImageDraw
-            draw = ImageDraw.Draw(overlay)
+                # Create semi-transparent overlay for dimming outside ROI
+                overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+                from PIL import ImageDraw
+                draw = ImageDraw.Draw(overlay)
 
-            # Dim areas outside ROI (draw semi-transparent black rectangles)
-            dim_color = (0, 0, 0, 100)  # Semi-transparent black
-            # Top
-            draw.rectangle([0, 0, w, py1], fill=dim_color)
-            # Bottom
-            draw.rectangle([0, py2, w, h], fill=dim_color)
-            # Left
-            draw.rectangle([0, py1, px1, py2], fill=dim_color)
-            # Right
-            draw.rectangle([px2, py1, w, py2], fill=dim_color)
+                # Dim areas outside ROI (draw semi-transparent black rectangles)
+                dim_color = (0, 0, 0, 100)  # Semi-transparent black
+                # Top
+                draw.rectangle([0, 0, w, py1], fill=dim_color)
+                # Bottom
+                draw.rectangle([0, py2, w, h], fill=dim_color)
+                # Left
+                draw.rectangle([0, py1, px1, py2], fill=dim_color)
+                # Right
+                draw.rectangle([px2, py1, w, py2], fill=dim_color)
 
-            # Draw ROI border (green)
-            border_color = (0, 255, 0, 255)
-            for i in range(3):  # 3px border
-                draw.rectangle([px1+i, py1+i, px2-i, py2-i], outline=border_color)
+                # Draw ROI border (green)
+                border_color = (0, 255, 0, 255)
+                for i in range(3):  # 3px border
+                    draw.rectangle([px1+i, py1+i, px2-i, py2-i], outline=border_color)
 
-            # Composite overlay onto image
-            img = Image.alpha_composite(img, overlay)
-            img = img.convert('RGB')
+                # Composite overlay onto image
+                img = Image.alpha_composite(img, overlay)
+                img = img.convert('RGB')
 
             # Convert to base64
             buffer = io.BytesIO()
@@ -671,6 +691,7 @@ class VideoROISelector:
             self.preview_frame,
             self.roi_x,
             self.roi_y,
+            self.zoom_roi,
             self.preview_output,
             scale_info_widget
         ])
