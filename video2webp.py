@@ -1095,8 +1095,60 @@ document.addEventListener("touchmove", (e) => {{
             print(f"Interactive HTML saved: {html_path}")
             print("Open in browser to use the draggable comparison slider")
 
+    def _build_reorder_buttons(self):
+        """Build move-left/move-right buttons for each video position."""
+        n = len(self.selectors)
+        if n < 2:
+            self.reorder_box = widgets.HBox()
+            return
+        button_groups = []
+        for pos in range(n):
+            left_btn = widgets.Button(
+                description='\u25c0',
+                layout=widgets.Layout(width='40px'),
+                disabled=(pos == 0)
+            )
+            right_btn = widgets.Button(
+                description='\u25b6',
+                layout=widgets.Layout(width='40px'),
+                disabled=(pos == n - 1)
+            )
+            left_btn.on_click(lambda _, p=pos: self._swap_videos(p - 1, p))
+            right_btn.on_click(lambda _, p=pos: self._swap_videos(p, p + 1))
+            button_groups.append(
+                widgets.HBox([left_btn, right_btn],
+                             layout=widgets.Layout(
+                                 justify_content='center',
+                                 min_width='400px'
+                             ))
+            )
+        self.reorder_box = widgets.HBox(button_groups)
+
+    def _swap_videos(self, i, j):
+        """Swap videos at positions i and j, then refresh the UI."""
+        if i < 0 or j >= len(self.selectors):
+            return
+        # Swap in both parallel lists
+        self.selectors[i], self.selectors[j] = self.selectors[j], self.selectors[i]
+        self.videos[i], self.videos[j] = self.videos[j], self.videos[i]
+        # Update selector indices (used for "Video N:" labels)
+        self.selectors[i].index = i
+        self.selectors[j].index = j
+        # Rebuild sync observers with correct indices
+        self._teardown_roi_sync()
+        self._setup_roi_sync()
+        # Refresh UI
+        self._refresh_roi_display()
+
+    def _refresh_roi_display(self):
+        """Rebuild the ROI selector display and reorder buttons after a swap."""
+        self.roi_box.children = tuple(sel.get_widget() for sel in self.selectors)
+        self._build_reorder_buttons()
+
     def _setup_roi_sync(self):
         """Setup ROI synchronization between videos."""
+        self._sync_handlers = []
+
         def make_sync_handler(source_idx, axis):
             def handler(change):
                 if not self.sync_roi.value or self._syncing:
@@ -1113,8 +1165,18 @@ document.addEventListener("touchmove", (e) => {{
             return handler
 
         for i, sel in enumerate(self.selectors):
-            sel.roi_x.observe(make_sync_handler(i, 'x'), names='value')
-            sel.roi_y.observe(make_sync_handler(i, 'y'), names='value')
+            hx = make_sync_handler(i, 'x')
+            hy = make_sync_handler(i, 'y')
+            sel.roi_x.observe(hx, names='value')
+            sel.roi_y.observe(hy, names='value')
+            self._sync_handlers.append((sel, hx, hy))
+
+    def _teardown_roi_sync(self):
+        """Remove ROI sync observers (preserves per-selector preview observers)."""
+        for sel, hx, hy in self._sync_handlers:
+            sel.roi_x.unobserve(hx, names='value')
+            sel.roi_y.unobserve(hy, names='value')
+        self._sync_handlers = []
 
     def _extract_roi_frame(self, video, roi, frame_num):
         """Extract a cropped frame from video."""
@@ -1385,7 +1447,10 @@ document.addEventListener("touchmove", (e) => {{
         """Display the converter UI."""
         # ROI selectors side by side
         roi_widgets = [sel.get_widget() for sel in self.selectors]
-        roi_box = widgets.HBox(roi_widgets)
+        self.roi_box = widgets.HBox(roi_widgets)
+
+        # Build reorder buttons
+        self._build_reorder_buttons()
 
         # Initialize previews
         for sel in self.selectors:
@@ -1394,7 +1459,8 @@ document.addEventListener("touchmove", (e) => {{
         display(widgets.VBox([
             widgets.HTML('<h3>1. Select ROI for each video</h3>'),
             widgets.HBox([self.sync_roi, self.apply_roi_btn]),
-            roi_box,
+            self.reorder_box,
+            self.roi_box,
             widgets.HTML('<h3>2. Layout</h3>'),
             self.frame_range,
             self.layout_select,
