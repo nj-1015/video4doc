@@ -647,8 +647,9 @@ class VideoROISelector:
                     pass
 
                 # Notify callback for ROI sync with other videos
+                # Use timer to escape Colab callback context so Output widget works
                 if self.on_roi_change:
-                    self.on_roi_change(self.index, (ref_x1, ref_x2), (ref_y1, ref_y2))
+                    threading.Timer(0.05, lambda: self.on_roi_change(self.index, (ref_x1, ref_x2), (ref_y1, ref_y2))).start()
         except (ValueError, IndexError):
             pass
 
