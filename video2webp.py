@@ -928,6 +928,23 @@ class SideBySideConverter:
         finally:
             self._syncing = False
 
+    def _apply_roi_to_all(self, _=None):
+        """Apply ROI from first video to all others and redraw previews."""
+        if len(self.selectors) < 2:
+            return
+        # Get ROI from first video
+        roi_x = self.selectors[0].roi_x.value
+        roi_y = self.selectors[0].roi_y.value
+        # Apply to all videos and redraw
+        for sel in self.selectors:
+            sel.roi_x.unobserve(sel._update_preview, names='value')
+            sel.roi_y.unobserve(sel._update_preview, names='value')
+            sel.roi_x.value = roi_x
+            sel.roi_y.value = roi_y
+            sel.roi_x.observe(sel._update_preview, names='value')
+            sel.roi_y.observe(sel._update_preview, names='value')
+            sel._update_preview()
+
     def _create_widgets(self):
         style = {'description_width': '120px'}
         layout = widgets.Layout(width='400px')
@@ -1051,8 +1068,15 @@ class SideBySideConverter:
         self.gdrive_picker = GDriveFolderPicker()
 
         self.sync_roi = widgets.Checkbox(
-            value=False, description='Sync ROI position', style=style
+            value=True, description='Sync ROI position', style=style
         )
+
+        self.apply_roi_btn = widgets.Button(
+            description='Apply ROI to All',
+            button_style='primary',
+            layout=widgets.Layout(width='150px')
+        )
+        self.apply_roi_btn.on_click(self._apply_roi_to_all)
 
         self.caption_position = widgets.RadioButtons(
             options=[('Top', 'top'), ('Bottom', 'bottom'), ('None', 'none')],
@@ -1583,7 +1607,7 @@ document.addEventListener("touchmove", (e) => {{
 
         display(widgets.VBox([
             widgets.HTML('<h3>1. Select ROI for each video</h3>'),
-            self.sync_roi,
+            widgets.HBox([self.sync_roi, self.apply_roi_btn]),
             roi_box,
             widgets.HTML('<h3>2. Layout</h3>'),
             self.frame_range,
