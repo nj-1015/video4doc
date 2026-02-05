@@ -915,15 +915,39 @@ class SideBySideConverter:
                     sel.roi_x.observe(sel._update_preview, names='value')
                     sel.roi_y.observe(sel._update_preview, names='value')
 
-                    # Update ROI visual via JavaScript
+                    # Update ROI visual via self-contained JavaScript
+                    # (doesn't rely on closure variables from the original script)
                     scale = sel.preview_scale
                     px1, py1 = int(roi_x[0] * scale), int(roi_y[0] * scale)
                     px2, py2 = int(roi_x[1] * scale), int(roi_y[1] * scale)
                     uid = f"roi_canvas_{i}"
                     info_text = f"ROI: {roi_x[1] - roi_x[0]} x {roi_y[1] - roi_y[0]} px (drag to select)"
+                    js_code = f'''
+                    (function() {{
+                        var canvas = document.getElementById("{uid}");
+                        var info = document.getElementById("{uid}_info");
+                        if (!canvas) return;
+                        var ctx = canvas.getContext("2d");
+                        var w = canvas.width, h = canvas.height;
+                        var x1 = {px1}, y1 = {py1}, x2 = {px2}, y2 = {py2};
+                        // Update global state
+                        window._roiState = window._roiState || {{}};
+                        window._roiState["{uid}"] = {{x1: x1, y1: y1, x2: x2, y2: y2}};
+                        // Draw ROI
+                        ctx.clearRect(0, 0, w, h);
+                        ctx.fillStyle = "rgba(0,0,0,0.4)";
+                        ctx.fillRect(0, 0, w, h);
+                        ctx.clearRect(x1, y1, x2 - x1, y2 - y1);
+                        ctx.strokeStyle = "#00ff00";
+                        ctx.lineWidth = 3;
+                        ctx.setLineDash([]);
+                        ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                        if (info) info.textContent = "{info_text}";
+                    }})();
+                    '''
                     try:
                         from google.colab import output
-                        output.eval_js(f'if(window.updateROI_{uid})window.updateROI_{uid}({px1},{py1},{px2},{py2},"{info_text}")')
+                        output.eval_js(js_code)
                     except ImportError:
                         pass
         finally:
