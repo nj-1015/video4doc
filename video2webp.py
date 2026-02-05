@@ -618,9 +618,15 @@ class VideoROISelector:
                     x1, x2 = x2, x1
                 if y1 > y2:
                     y1, y2 = y2, y1
-                # Update sliders - this triggers preview regeneration which redraws ROI
+                # Update sliders (unobserve first to prevent multiple redraws)
+                self.roi_x.unobserve(self._update_preview, names='value')
+                self.roi_y.unobserve(self._update_preview, names='value')
                 self.roi_x.value = (x1, x2)
                 self.roi_y.value = (y1, y2)
+                self.roi_x.observe(self._update_preview, names='value')
+                self.roi_y.observe(self._update_preview, names='value')
+                # Explicitly update preview (observers may not fire in Colab callback context)
+                self._update_preview()
                 # Notify callback for ROI sync with other videos
                 if self.on_roi_change:
                     self.on_roi_change(self.index, (x1, x2), (y1, y2))
@@ -878,10 +884,15 @@ class SideBySideConverter:
         try:
             for i, sel in enumerate(self.selectors):
                 if i != source_idx:
-                    # Update slider values - this will trigger preview regeneration
-                    # which redraws the ROI rectangle correctly
+                    # Unobserve to prevent multiple redraws
+                    sel.roi_x.unobserve(sel._update_preview, names='value')
+                    sel.roi_y.unobserve(sel._update_preview, names='value')
                     sel.roi_x.value = roi_x
                     sel.roi_y.value = roi_y
+                    sel.roi_x.observe(sel._update_preview, names='value')
+                    sel.roi_y.observe(sel._update_preview, names='value')
+                    # Explicitly update preview
+                    sel._update_preview()
         finally:
             self._syncing = False
 
