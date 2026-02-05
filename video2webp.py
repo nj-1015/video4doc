@@ -555,7 +555,7 @@ class VideoROISelector:
         self._roi_coords = widgets.Text(value='', layout=widgets.Layout(display='none'))
         self._roi_coords.observe(self._on_roi_drag, names='value')
 
-        self.preview_html = widgets.HTML(value='')
+        self.preview_output = widgets.Output()
 
         # Link preview updates
         self.roi_x.observe(self._update_preview, names='value')
@@ -839,8 +839,10 @@ class VideoROISelector:
                 }})();
                 </script>
                 '''
-            # HTML widget can be updated from any context (main thread, Timer, callback)
-            self.preview_html.value = html_content
+            # Use Output widget with clear_output for proper script execution
+            self.preview_output.clear_output(wait=True)
+            with self.preview_output:
+                display(HTML(html_content))
 
     def get_roi(self):
         """Return current ROI as (x1, y1, x2, y2) in actual video coordinates."""
@@ -872,7 +874,7 @@ class VideoROISelector:
             self.roi_x,
             self.roi_y,
             self._roi_coords,  # Hidden widget for JS communication
-            self.preview_html,
+            self.preview_output,
             scale_info_widget
         ])
 
@@ -916,8 +918,8 @@ class SideBySideConverter:
                     sel.roi_y.value = roi_y
                     sel.roi_x.observe(sel._update_preview, names='value')
                     sel.roi_y.observe(sel._update_preview, names='value')
-                    # Update preview
-                    sel._update_preview()
+                    # Note: Visual preview not updated here (Output widget limitation)
+                    # User can click "Apply ROI to All" button to update visuals
         finally:
             self._syncing = False
 
