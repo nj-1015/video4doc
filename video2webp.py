@@ -883,49 +883,10 @@ class SideBySideConverter:
         try:
             for i, sel in enumerate(self.selectors):
                 if i != source_idx:
-                    # Skip preview regeneration - we update via JavaScript
-                    sel._skip_preview_update = True
+                    # Update slider values - this will trigger preview regeneration
+                    # which redraws the ROI rectangle correctly
                     sel.roi_x.value = roi_x
                     sel.roi_y.value = roi_y
-                    sel._skip_preview_update = False
-                    # Update the canvas ROI via JavaScript (more reliable in Colab)
-                    scale = sel.preview_scale
-                    px1, py1 = int(roi_x[0] * scale), int(roi_y[0] * scale)
-                    px2, py2 = int(roi_x[1] * scale), int(roi_y[1] * scale)
-                    uid = f"roi_canvas_{i}"
-                    js_code = f'''
-                    (function() {{
-                        var uid = "{uid}";
-                        var x1 = {px1}, y1 = {py1}, x2 = {px2}, y2 = {py2};
-                        // Update global ROI state so subsequent drags use correct values
-                        window._roiState = window._roiState || {{}};
-                        window._roiState[uid] = {{x1: x1, y1: y1, x2: x2, y2: y2}};
-                        var canvas = document.getElementById(uid);
-                        if (canvas) {{
-                            var ctx = canvas.getContext("2d");
-                            var w = canvas.width, h = canvas.height;
-                            // Clear and dim outside ROI
-                            ctx.clearRect(0, 0, w, h);
-                            ctx.fillStyle = "rgba(0,0,0,0.4)";
-                            ctx.fillRect(0, 0, w, h);
-                            ctx.clearRect(x1, y1, x2 - x1, y2 - y1);
-                            // Draw ROI border
-                            ctx.strokeStyle = "#00ff00";
-                            ctx.lineWidth = 3;
-                            ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-                        }}
-                        var info = document.getElementById(uid + "_info");
-                        if (info) {{
-                            info.textContent = "ROI: {roi_x[1] - roi_x[0]} x {roi_y[1] - roi_y[0]} px (drag to select)";
-                        }}
-                    }})();
-                    '''
-                    try:
-                        from google.colab import output
-                        output.eval_js(js_code)
-                    except ImportError:
-                        from IPython.display import display, Javascript
-                        display(Javascript(js_code))
         finally:
             self._syncing = False
 
