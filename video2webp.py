@@ -841,14 +841,15 @@ class VideoROISelector:
                 }})();
                 </script>
                 '''
-            # Always display within Output widget context to avoid duplicates
-            with self.preview_output:
-                if not self._preview_initialized:
+            # Use display_id for context-independent updates
+            if not self._preview_initialized:
+                # First time: display inside Output widget for layout, with display_id
+                with self.preview_output:
                     display(HTML(html_content), display_id=self.preview_display_id)
-                    self._preview_initialized = True
-                else:
-                    clear_output(wait=True)
-                    display(HTML(html_content), display_id=self.preview_display_id)
+                self._preview_initialized = True
+            else:
+                # Subsequent updates: use update_display (works in any context)
+                update_display(HTML(html_content), display_id=self.preview_display_id)
 
     def get_roi(self):
         """Return current ROI as (x1, y1, x2, y2) in actual video coordinates."""
