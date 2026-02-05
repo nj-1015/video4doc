@@ -626,28 +626,16 @@ class VideoROISelector:
                 if ref_y1 > ref_y2:
                     ref_y1, ref_y2 = ref_y2, ref_y1
 
-                # Update sliders (unobserve to prevent triggering _update_preview)
-                self.roi_x.unobserve(self._update_preview, names='value')
-                self.roi_y.unobserve(self._update_preview, names='value')
-                self.roi_x.value = (ref_x1, ref_x2)
-                self.roi_y.value = (ref_y1, ref_y2)
-                self.roi_x.observe(self._update_preview, names='value')
-                self.roi_y.observe(self._update_preview, names='value')
+                # Use Timer to escape Colab callback context
+                # Update sliders WITH observers attached - this triggers _update_preview
+                def update_sliders():
+                    self.roi_x.value = (ref_x1, ref_x2)
+                    self.roi_y.value = (ref_y1, ref_y2)
+                    # Sync to other videos
+                    if self.on_roi_change:
+                        self.on_roi_change(self.index, (ref_x1, ref_x2), (ref_y1, ref_y2))
 
-                # Update ROI visual via JavaScript (works in Colab callback context)
-                # The JS drawROI() already ran in onEnd(), but we call again to ensure sync
-                uid = f"roi_canvas_{self.index}"
-                info_text = f"ROI: {ref_x2 - ref_x1} x {ref_y2 - ref_y1} px (drag to select)"
-                try:
-                    from google.colab import output
-                    output.eval_js(f'if(window.updateROI_{uid})window.updateROI_{uid}({px1},{py1},{px2},{py2},"{info_text}")')
-                except ImportError:
-                    pass
-
-                # Notify callback for ROI sync with other videos
-                # Use timer to escape Colab callback context so Output widget works
-                if self.on_roi_change:
-                    threading.Timer(0.05, lambda: self.on_roi_change(self.index, (ref_x1, ref_x2), (ref_y1, ref_y2))).start()
+                threading.Timer(0.01, update_sliders).start()
         except (ValueError, IndexError):
             pass
 
@@ -911,15 +899,9 @@ class SideBySideConverter:
         try:
             for i, sel in enumerate(self.selectors):
                 if i != source_idx:
-                    # Update slider values
-                    sel.roi_x.unobserve(sel._update_preview, names='value')
-                    sel.roi_y.unobserve(sel._update_preview, names='value')
+                    # Just update sliders - observers will handle preview update
                     sel.roi_x.value = roi_x
                     sel.roi_y.value = roi_y
-                    sel.roi_x.observe(sel._update_preview, names='value')
-                    sel.roi_y.observe(sel._update_preview, names='value')
-                    # Note: Visual preview not updated here (Output widget limitation)
-                    # User can click "Apply ROI to All" button to update visuals
         finally:
             self._syncing = False
 
