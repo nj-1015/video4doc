@@ -290,6 +290,12 @@ class WebPConverter:
             style=style, layout=layout
         )
 
+        self.output_name = widgets.Text(
+            value=os.path.splitext(os.path.basename(self.video.filename))[0],
+            description='Output Name:',
+            style=style, layout=layout
+        )
+
         self.save_to_gdrive = widgets.Checkbox(
             value=False, description='Save to Google Drive', style=style
         )
@@ -361,11 +367,11 @@ class WebPConverter:
             frame = self._get_frame(self.frame_range.value[0])
             if frame is not None:
                 img = Image.fromarray(frame)
-                base_name = os.path.splitext(os.path.basename(self.video.filename))[0] + '_thumb.png'
+                thumb_name = f"{self.output_name.value}_thumb.png"
                 if self.save_to_gdrive.value:
-                    thumb_path = f"{self.gdrive_picker.get_path()}/{base_name}"
+                    thumb_path = f"{self.gdrive_picker.get_path()}/{thumb_name}"
                 else:
-                    thumb_path = base_name
+                    thumb_path = thumb_name
                 img.save(thumb_path, 'PNG')
                 print(f"Thumbnail saved: {thumb_path}")
 
@@ -415,13 +421,13 @@ class WebPConverter:
 
             # Determine output path
             ext = self.output_format.value
-            base_name = os.path.splitext(os.path.basename(self.video.filename))[0] + f'.{ext}'
+            output_name = f"{self.output_name.value}.{ext}"
             if self.save_to_gdrive.value:
                 gdrive_folder = self.gdrive_picker.get_path()
-                self.output_filename = f"{gdrive_folder}/{base_name}"
+                self.output_filename = f"{gdrive_folder}/{output_name}"
                 print(f"Saving to GDrive: {self.output_filename}")
             else:
-                self.output_filename = base_name
+                self.output_filename = output_name
                 print(f"Saving locally: {self.output_filename}")
 
             # Save animation
@@ -461,6 +467,7 @@ class WebPConverter:
             self.resize_method,
             self.frame_skip,
             widgets.HBox([self.speed, self.loop, self.pingpong]),
+            self.output_name,
             self.save_to_gdrive,
             self.gdrive_picker.get_widget(),
             widgets.HBox([self.preview_btn, self.convert_btn, self.thumbnail_btn]),
