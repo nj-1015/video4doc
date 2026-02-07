@@ -833,6 +833,17 @@ class SideBySideConverter:
             value=True, description='Show split line', style=style
         )
 
+        self.gap_size = widgets.IntSlider(
+            value=0, min=0, max=20,
+            step=1, description='Gap (px):',
+            style=style, layout=layout
+        )
+
+        self.gap_color = widgets.ColorPicker(
+            value='#000000', description='Gap Color:',
+            style=style
+        )
+
         self.quality = widgets.IntSlider(
             value=70, min=1, max=100,
             step=1, description='Quality (%):',
@@ -1385,6 +1396,16 @@ document.addEventListener("touchmove", (e) => {{
                     new_w = int(f.shape[1] * scale)
                     f = cv2.resize(f, (new_w, max_h), interpolation=self.resize_method.value)
                 resized.append(f)
+            if self.gap_size.value > 0:
+                color_hex = self.gap_color.value.lstrip('#')
+                color_rgb = tuple(int(color_hex[i:i+2], 16) for i in (0, 2, 4))
+                gap = np.full((max_h, self.gap_size.value, 3), color_rgb, dtype=np.uint8)
+                parts = []
+                for i, f in enumerate(resized):
+                    if i > 0:
+                        parts.append(gap)
+                    parts.append(f)
+                return np.hstack(parts)
             return np.hstack(resized)
         else:
             # Match widths
@@ -1396,6 +1417,16 @@ document.addEventListener("touchmove", (e) => {{
                     new_h = int(f.shape[0] * scale)
                     f = cv2.resize(f, (max_w, new_h), interpolation=self.resize_method.value)
                 resized.append(f)
+            if self.gap_size.value > 0:
+                color_hex = self.gap_color.value.lstrip('#')
+                color_rgb = tuple(int(color_hex[i:i+2], 16) for i in (0, 2, 4))
+                gap = np.full((self.gap_size.value, max_w, 3), color_rgb, dtype=np.uint8)
+                parts = []
+                for i, f in enumerate(resized):
+                    if i > 0:
+                        parts.append(gap)
+                    parts.append(f)
+                return np.vstack(parts)
             return np.vstack(resized)
 
     def _show_preview(self, _=None):
@@ -1562,6 +1593,7 @@ document.addEventListener("touchmove", (e) => {{
             self.frame_range,
             self.layout_select,
             widgets.HBox([self.split_position, self.split_line]),
+            widgets.HBox([self.gap_size, self.gap_color]),
             widgets.HBox([self.caption_position, self.caption_size]),
             widgets.HTML('<h3>3. Adjustments</h3>'),
             widgets.HBox([self.brightness, self.contrast]),
