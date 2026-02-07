@@ -262,7 +262,7 @@ class WebPConverter:
         )
 
         self.output_format = widgets.RadioButtons(
-            options=[('WebP', 'webp'), ('GIF', 'gif')],
+            options=[('WebP', 'webp'), ('GIF', 'gif'), ('APNG', 'apng')],
             value='webp', description='Format:',
             style=style
         )
@@ -438,6 +438,13 @@ class WebPConverter:
                     duration=duration_ms,
                     loop=0 if self.loop.value else 1
                 )
+            elif self.output_format.value == 'apng':
+                frames[0].save(
+                    self.output_filename, 'PNG',
+                    save_all=True, append_images=frames[1:],
+                    duration=duration_ms,
+                    loop=0 if self.loop.value else 1
+                )
             else:
                 frames[0].save(
                     self.output_filename, 'WEBP',
@@ -462,7 +469,7 @@ class WebPConverter:
             widgets.HBox([self.brightness, self.contrast]),
             widgets.HBox([self.border_size, self.border_color]),
             widgets.HTML('<h4>Output Settings</h4>'),
-            widgets.HBox([self.output_format, self.quality]),
+            widgets.HBox([self.output_format, self.quality, widgets.HTML('<small style="color:#888;">(WebP only)</small>')]),
             widgets.HBox([self.scale, self.max_size]),
             self.resize_method,
             self.frame_skip,
@@ -869,7 +876,7 @@ class SideBySideConverter:
         )
 
         self.output_format = widgets.RadioButtons(
-            options=[('WebP', 'webp'), ('GIF', 'gif')],
+            options=[('WebP', 'webp'), ('GIF', 'gif'), ('APNG', 'apng')],
             value='webp', description='Format:',
             style=style
         )
@@ -1513,6 +1520,13 @@ document.addEventListener("touchmove", (e) => {{
                     duration=duration_ms,
                     loop=0 if self.loop.value else 1
                 )
+            elif self.output_format.value == 'apng':
+                combined_frames[0].save(
+                    self.output_filename, 'PNG',
+                    save_all=True, append_images=combined_frames[1:],
+                    duration=duration_ms,
+                    loop=0 if self.loop.value else 1
+                )
             else:
                 combined_frames[0].save(
                     self.output_filename, 'WEBP',
@@ -1554,7 +1568,7 @@ document.addEventListener("touchmove", (e) => {{
             widgets.HBox([self.border_size, self.border_color]),
             self.resize_method,
             widgets.HTML('<h3>4. Output</h3>'),
-            widgets.HBox([self.output_format, self.quality]),
+            widgets.HBox([self.output_format, self.quality, widgets.HTML('<small style="color:#888;">(WebP only)</small>')]),
             widgets.HBox([self.max_size, self.speed]),
             self.frame_skip,
             widgets.HBox([self.loop, self.pingpong]),
