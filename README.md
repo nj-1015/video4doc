@@ -14,7 +14,8 @@ Convert MP4 videos to animated WebP/GIF for documentation, with powerful compari
 - Ping-pong (boomerang) loop
 - Brightness/contrast adjustment
 - Add colored border
-- Export as WebP or GIF
+- Export as WebP, GIF, or APNG
+- Custom output filename
 - Save thumbnail as PNG
 
 ### Side-by-Side Converter
@@ -25,13 +26,15 @@ Convert MP4 videos to animated WebP/GIF for documentation, with powerful compari
   - **Vertical** - Videos stacked
   - **Split Screen** - Overlay with adjustable split line
 - Add captions to each video
+- Adjustable gap/separator between videos
 - Animated preview before conversion
 - **Interactive HTML export** - Draggable before/after comparison slider
 
 ### Output Options
 - Save locally or to Google Drive
 - Interactive folder picker with create folder
-- WebP or GIF format
+- WebP, GIF, or APNG format
+- Custom output filename
 - Adjustable quality and max size
 
 ## Quick Start
@@ -88,7 +91,7 @@ sbs.show()
 ### Output
 | Control | Description |
 |---------|-------------|
-| Format | WebP or GIF |
+| Format | WebP, GIF, or APNG |
 | Quality | Output quality (WebP only) |
 | Save to GDrive | Save directly to Google Drive |
 
@@ -98,6 +101,7 @@ sbs.show()
 | Layout | Horizontal / Vertical / Split Screen |
 | Split % | Position of split line (split mode) |
 | Sync ROI | Synchronize crop position across videos |
+| Gap | Colored separator between videos (px) |
 | Caption | Add text label to each video |
 
 ## Output Buttons
@@ -112,6 +116,28 @@ sbs.show()
 ## Interactive HTML Comparison
 
 The "Interactive HTML" button creates a standalone HTML file with a draggable slider for before/after comparison. Perfect for embedding in documentation or sharing.
+
+## Format Comparison: WebP vs GIF vs APNG
+
+We tested all three output formats across 6 sample videos. Here are the key results:
+
+| Format | Avg Size | Avg PSNR | Avg SSIM | Size vs GIF |
+|--------|----------|----------|----------|-------------|
+| GIF | 7,490 KB | 39.14 dB | 0.9992 | 100% |
+| **WebP q=70** | **775 KB** | **38.36 dB** | **0.9984** | **10%** |
+| WebP q=90 | 1,456 KB | 43.00 dB | 0.9995 | 19% |
+| APNG | 11,041 KB | Lossless | 1.0000 | 147% |
+
+**WebP q=70 is ~10x smaller than GIF** with nearly identical visual quality. WebP q=90 actually exceeds GIF quality at 1/5th the file size. APNG is lossless but produces the largest files.
+
+| Use Case | Recommended Format |
+|----------|-------------------|
+| Documentation & blog posts | WebP q=70 |
+| Google Slides | WebP (animated WebP supported) |
+| Pixel-perfect archival | APNG |
+| Legacy compatibility | GIF |
+
+For the full analysis with side-by-side animated comparisons, see the [detailed report](format_comparison_report.md) and [interactive HTML comparison](format_comparison.html).
 
 ## Requirements
 
